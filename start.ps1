@@ -1,6 +1,6 @@
 # One command to (re)start everything:   .\start.ps1
 # Safe to re-run. Add -Seed to load the synthetic borrowers and loans as well.
-# Add -Reconcile to build the bank statement, run the matcher and print its accuracy report.
+# Add -Reconcile to build the bank statement, run the matcher, print its accuracy report, post the clear payments and verify the ledger.
 param([switch]$Seed, [switch]$Reconcile)
 
 $root = $PSScriptRoot
@@ -37,7 +37,7 @@ if (-not (Test-Path $envFile)) {
     $line = Select-String -Path (Join-Path $sandbox '.env') -Pattern '^FINERACT_ADMIN_PASSWORD=(.*)$'
     Stop-If (-not $line) 'FINERACT_ADMIN_PASSWORD is missing from the sandbox .env.'
     [IO.File]::WriteAllLines($envFile, @(
-        'MIFOSX_BASE_URL=http://localhost:4200/fineract-provider/api/v1',
+        'MIFOSX_BASE_URL=http://127.0.0.1:4200/fineract-provider/api/v1',   # not localhost: Windows tries IPv6 first and each call waits 2 s
         'MIFOSX_TENANT_ID=default',
         'MIFOSX_USERNAME=mifos',
         "MIFOSX_PASSWORD=$($line.Matches[0].Groups[1].Value)"))
@@ -54,7 +54,7 @@ Push-Location $root
 & $py scripts\check_connection.py
 if ($Seed -and $LASTEXITCODE -eq 0) { & $py -m seed.load_fineract }
 if ($Reconcile) {
-    foreach ($step in 'statement.fetch_schedules', 'statement.generate', 'matcher.run', 'matcher.evaluate') {
+    foreach ($step in 'statement.fetch_schedules', 'statement.generate', 'matcher.run', 'matcher.evaluate', 'posting.run', 'posting.verify') {
         if ($LASTEXITCODE -eq 0) { & $py -m $step }
     }
 }

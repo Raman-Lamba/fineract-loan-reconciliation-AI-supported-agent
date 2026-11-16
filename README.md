@@ -4,7 +4,8 @@ An AI agent that matches incoming bank payments to loans in Apache Fineract, pos
 and splits each one between the lender and its partner bank. See [spec.md](spec.md) for the problem.
 All data is synthetic. This is a portfolio project, not a production or regulator-approved system.
 
-**Status: milestone 3 (matcher with an accuracy report; nothing is posted yet).** Milestone 1 ran against a live
+**Status: milestone 4 (clear payments are posted to Fineract and split 80:20 in a ledger; the review queue is
+next).** Milestone 1 ran against a live
 Fineract on 16 Nov 2026: 200 clients and 259 of 260 loans loaded (L0251-L0260 are same-name twins). Loan
 L0202 is missing because an early trial run activated its borrower too late; a wipe and reseed (below)
 would load all 260.
@@ -14,8 +15,8 @@ would load all 260.
 | 1 | Sandbox, synthetic borrowers and loans | done |
 | 2 | Bank statement + answer key from Fineract's schedules | built |
 | 3 | Matcher: post, queue or ignore each line, with a reason | built |
-| 4 | Post repayments (UTR as `externalId`), 80:20 split ledger | next |
-| 5 | Review queue, audit log, accuracy report against the targets | |
+| 4 | Post repayments (UTR as `externalId`), 80:20 split ledger | built |
+| 5 | Review queue, audit log, accuracy report against the targets | next |
 
 ## Terms
 
@@ -32,11 +33,11 @@ Needs: Docker Desktop (WSL 2 backend) running, Git for Windows, Python 3.11+.
 ```powershell
 .\start.ps1          # start Fineract, confirm the login, list one client and one loan
 .\start.ps1 -Seed    # the same, then load the synthetic borrowers and loans
-.\start.ps1 -Seed -Reconcile   # everything: also build the statement, run the matcher, print its accuracy
+.\start.ps1 -Seed -Reconcile   # everything: also build the statement, match, post the clear payments, verify
 ```
 
-`-Reconcile` runs `statement.fetch_schedules`, `statement.generate`, `matcher.run` and `matcher.evaluate`
-in that order (each is described below) and can be used without `-Seed` once the loans are loaded.
+`-Reconcile` runs `statement.fetch_schedules`, `statement.generate`, `matcher.run`, `matcher.evaluate`,
+`posting.run` and `posting.verify` in that order (each is described below) and can be used without `-Seed` once the loans are loaded.
 
 The script is safe to re-run after a reboot. On first run it clones the connector (pinned commit) into
 `vendor/`, generates the sandbox secrets, starts the sandbox, writes `.env`, and creates `.venv`.
@@ -45,7 +46,7 @@ The first start takes about 3 minutes (Fineract's database migrations).
 | What | Where |
 |---|---|
 | Mifos web app | http://localhost:4200 (user `mifos`, password `MIFOSX_PASSWORD` in `.env`) |
-| Fineract API | http://localhost:4200/fineract-provider/api/v1 (proxied by the web app) |
+| Fineract API | http://127.0.0.1:4200/fineract-provider/api/v1 (proxied by the web app) |
 | Stop | `docker compose stop` in `vendor\mcp-mifosx\agentic-mifos-sandbox` |
 | Wipe all data | `docker compose down -v` in the same folder, then delete `.env` |
 
@@ -107,10 +108,53 @@ another person, 16 unrelated). The statement is synthetic and its name mangling 
 patterns that the rules were written for, so these numbers say the rules are sound on this data, not how
 they would do on a real bank feed.
 
+## Posting
+
+```powershell
+.venv\Scripts\python -m posting.run --limit 5   # quick trial: the first 5 `post` decisions
+.venv\Scripts\python -m posting.run             # all of them -> Fineract, data\ledger.csv, data\audit.csv
+.venv\Scripts\python -m posting.verify          # the ledger against Fineract, and the totals
+```
+
+For each `post` decision, in order: skip it if its txn_id is already in the ledger; read the loan from
+Fineract and, if the matched instalment is already paid or the loan is closed, queue it instead; post the
+repayment with the line's date, `externalId` and `receiptNumber` = txn_id and the channel as payment type;
+split it 80:20 (partner share rounded half-up to the paisa, the lender gets the rest, so the two always add
+up); append one row to `data\ledger.csv` and one to `data\audit.csv` (posted, recovered, queued or
+failed, with the reason and the approver). A failed post is logged and the run carries on. Steps:
+[docs/superpowers/specs/2026-11-16-posting-design.md](docs/superpowers/specs/2026-11-16-posting-design.md).
+
+It is safe to re-run. If a run stops after Fineract took a payment but before the ledger row was written,
+the next run finds that payment by its `externalId` and records it without posting again (`recovered`).
+
+Measured on 16 Nov 2026. The first full run posted all 1,341 `post` decisions (1 of them recovered, from
+the trial that checked Fineract's duplicate guard); none was already paid and none failed. A second full
+run posted nothing (`skipped (in ledger)=1341`). `posting.verify` then printed:
+
+```
+ledger rows checked against Fineract: 1341, problems: 0
+payments posted: 1341
+rupees posted:   18,129,477.71
+partner share:   14,503,581.84
+lender share:    3,625,895.87
+loans in arrears: 194 of 259
+```
+
+Loans are still in arrears where a payment was queued for a person (271 lines), never arrived, or fell
+due after the statement ends on 31 October.
+
 ## Findings that shape the design
 
-Read from the Fineract source at the commit the sandbox pins (`apache/fineract@7ac780192`), not yet
-exercised against a running server.
+Read from the Fineract source at the commit the sandbox pins (`apache/fineract@7ac780192`). The repayment
+fields and the duplicate guard were then exercised against the running sandbox on 16 Nov 2026:
+
+- A second repayment with the same `externalId` is refused with HTTP 400, `Failed data validation due to:
+  value.must.be.unique.`
+- `GET /loans/{loanId}/transactions/external-id/{externalId}` returns the transaction, or 404 if that loan
+  has none with that id.
+- Call the API at `127.0.0.1`, not `localhost`: on Windows each call to `localhost` waited about 2 seconds
+  (IPv6 is tried first), which made a full posting run 20 times slower. `start.ps1` writes `127.0.0.1` into
+  a new `.env`; in an older `.env`, change the host in `MIFOSX_BASE_URL` by hand.
 
 **Where the bank txn_id goes: `externalId` on the repayment.**
 `POST /loans/{id}/transactions?command=repayment` accepts `transactionDate`, `transactionAmount`,

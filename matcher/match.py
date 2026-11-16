@@ -64,8 +64,7 @@ def decide(lines: list[dict], schedules: list[dict]) -> list[dict]:
                 return inst["due"]
         return ""
 
-    # shortcut: schedules are a snapshot, so a second payment for an instalment that is already paid
-    # would also post; read the loan's outstanding amounts from Fineract when milestone 4 posts.
+    # Schedules are a snapshot: whether the instalment is still unpaid is checked live, in posting.post.
     seen, out = set(), []
     for line in lines:
         if line["txn_id"] in seen:
