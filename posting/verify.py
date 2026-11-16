@@ -24,29 +24,41 @@ def check(ledger: list[dict], in_fineract: dict) -> list[str]:
     return problems
 
 
-def main():
-    from posting.run import DATA, read  # here, not at the top: check() must import without the connector
-    from seed.connector import fineract_client as fc, ok
-
-    ledger = read("ledger.csv")
+def read_fineract(loans: list[dict], fc, ok) -> tuple[dict, int]:
+    """(each live repayment's externalId -> its amount, how many of the loans are in arrears)."""
     in_fineract, arrears = {}, 0
-    loans = json.loads((DATA / "schedules.json").read_text())
     for loan in loans:
         live = ok(fc.execute_get(f"loans/{loan['loan_id']}", {"associations": "transactions"}),
                   f"Read loan {loan['loan_ref']}")
         arrears += bool(live.get("inArrears"))
         in_fineract.update({t["externalId"]: t["amount"] for t in live["transactions"]
                             if t.get("externalId") and not t.get("manuallyReversed")})
+    return in_fineract, arrears
+
+
+def totals(ledger: list[dict]) -> dict:
+    """Payments posted and the rupees: in all, the partner's share and the lender's."""
+    return {"payments": len(ledger), **{column: sum((Decimal(row[column]) for row in ledger), Decimal("0.00"))
+                                        for column in ("amount", "partner_share", "lender_share")}}
+
+
+def main():
+    from posting.run import DATA, read  # here, not at the top: check() must import without the connector
+    from seed.connector import fineract_client as fc, ok
+
+    ledger = read("ledger.csv")
+    loans = json.loads((DATA / "schedules.json").read_text())
+    in_fineract, arrears = read_fineract(loans, fc, ok)
 
     problems = check(ledger, in_fineract)
     for problem in problems:
         print(f"PROBLEM {problem}")
-    total = lambda column: sum(Decimal(row[column]) for row in ledger)  # noqa: E731
+    total = totals(ledger)
     print(f"ledger rows checked against Fineract: {len(ledger)}, problems: {len(problems)}")
-    print(f"payments posted: {len(ledger)}")
-    print(f"rupees posted:   {total('amount'):,.2f}")
-    print(f"partner share:   {total('partner_share'):,.2f}")
-    print(f"lender share:    {total('lender_share'):,.2f}")
+    print(f"payments posted: {total['payments']}")
+    print(f"rupees posted:   {total['amount']:,.2f}")
+    print(f"partner share:   {total['partner_share']:,.2f}")
+    print(f"lender share:    {total['lender_share']:,.2f}")
     print(f"loans in arrears: {arrears} of {len(loans)}")
     if problems:
         sys.exit(1)

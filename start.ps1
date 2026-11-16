@@ -1,7 +1,8 @@
 # One command to (re)start everything:   .\start.ps1
 # Safe to re-run. Add -Seed to load the synthetic borrowers and loans as well.
 # Add -Reconcile to build the bank statement (imported from data\bank_export.csv if that file exists, synthetic otherwise), run the matcher, print its accuracy report, post the clear payments, verify the ledger, and write the review queue and the partner report.
-param([switch]$Seed, [switch]$Reconcile)
+# Add -Ui to open the review page and the setup guide at http://127.0.0.1:8000 (python -m ui.serve). It runs last and keeps running until Ctrl+C.
+param([switch]$Seed, [switch]$Reconcile, [switch]$Ui)
 
 $root = $PSScriptRoot
 $repo = Join-Path $root 'vendor\mcp-mifosx'
@@ -69,4 +70,5 @@ if ($Reconcile) {
         if ($LASTEXITCODE -eq 0) { & $py -m ($step -split ' ') }
     }
 }
+if ($Ui -and $LASTEXITCODE -eq 0) { & $py -m ui.serve }
 Pop-Location

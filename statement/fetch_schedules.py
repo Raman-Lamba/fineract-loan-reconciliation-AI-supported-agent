@@ -6,13 +6,13 @@ Instalment amounts are Fineract's own, so the statement generator never redoes E
 """
 import json
 from datetime import date
+from pathlib import Path
 
-from seed.connector import ROOT, fineract_client as fc, ok
-
-OUT = ROOT / "data" / "schedules.json"
+OUT = Path(__file__).resolve().parents[1] / "data" / "schedules.json"
 
 
-def fetch() -> list[dict]:
+def list_loans(fc, ok) -> list[dict]:
+    """Every loan in Fineract, as the list call gives it (no schedule)."""
     loans, offset = [], 0
     while True:
         page = ok(fc.execute_get("loans", {"offset": offset, "limit": 200}), "List loans")
@@ -20,25 +20,30 @@ def fetch() -> list[dict]:
         loans += items
         offset += len(items)
         if not items or offset >= page.get("totalFilteredRecords", 0):
-            break
+            return loans
+
+
+def fetch(fc, ok) -> list[dict]:
     out = []
-    for item in loans:
-        if not item.get("externalId"):
-            continue  # not one of ours (the sandbox bootstrap's own demo loans)
+    for item in list_loans(fc, ok):
         loan = ok(fc.execute_get(f"loans/{item['id']}", {"associations": "repaymentSchedule"}), f"Read loan {item['id']}")
         instalments = [
             {"due": date(*p["dueDate"]).isoformat(), "amount": round(p["totalDueForPeriod"], 2)}
             for p in loan["repaymentSchedule"]["periods"] if p.get("period")
         ]
         first, _, last = loan["clientName"].partition(" ")
-        out.append({"loan_ref": loan["externalId"], "loan_id": loan["id"], "account_no": loan["accountNo"],
-                    "client_id": loan["clientId"], "firstname": first, "lastname": last,
-                    "instalments": instalments})
+        # loan_ref is the lender's own reference, Fineract's externalId. A loan without one is known by its
+        # Fineract account number, so a book that never filled externalId in can still be reconciled.
+        out.append({"loan_ref": loan.get("externalId") or loan["accountNo"], "loan_id": loan["id"],
+                    "account_no": loan["accountNo"], "client_id": loan["clientId"], "firstname": first,
+                    "lastname": last, "instalments": instalments})
     return sorted(out, key=lambda loan: loan["loan_ref"])
 
 
 def main():
-    schedules = fetch()
+    from seed.connector import fineract_client as fc, ok
+
+    schedules = fetch(fc, ok)
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(json.dumps(schedules, indent=1))
     print(f"loans: {len(schedules)} instalments: {sum(len(s['instalments']) for s in schedules)} -> {OUT}")

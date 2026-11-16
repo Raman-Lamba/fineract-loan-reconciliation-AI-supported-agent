@@ -49,13 +49,17 @@ def apply(queue: list[dict], lines: dict, loan_ids: dict, fc, payment_types: dic
         yield ({**row, "note": f"{PROBLEM}{problem} | {note}"} if problem else None), audit, ledger
 
 
-def main():
+def run(fc, ok, only: str | None = None) -> tuple[list[dict], dict]:
+    """Applies the decided rows of queue.csv and writes the ledger, the audit log and the queue.
+
+    `only`: apply just the row with this txn_id (the review page decides one line at a time) and leave
+    the others exactly as they are. Returns (the rows still in the queue, how many rows ended how).
+    """
     import json
     from datetime import datetime
 
     from posting.run import AUDIT, DATA, LEDGER, appender, read
     from review.build import QUEUE, read_queue, write_queue
-    from seed.connector import fineract_client as fc, ok
 
     queue = read_queue()
     QUEUE.open("a").close()  # stops here, before any posting, if Excel still has the file open
@@ -69,7 +73,11 @@ def main():
 
     to_ledger, to_audit = appender("ledger.csv", LEDGER), appender("audit.csv", AUDIT)
     kept, counts = [], {}
-    for keep, audit, ledger in apply(queue, lines, loan_ids, fc, payment_types, ledger_ids, rejected_ids):
+    for row in queue:
+        if only not in (None, row["txn_id"]):
+            kept.append(row)
+            continue
+        (keep, audit, ledger), = apply([row], lines, loan_ids, fc, payment_types, ledger_ids, rejected_ids)
         if ledger:
             to_ledger(ledger)
         if audit:
@@ -82,9 +90,17 @@ def main():
         else:
             what = audit["action"] if audit else "applied earlier"
         counts[what] = counts.get(what, 0) + 1
+    to_ledger.close(), to_audit.close()
     write_queue(kept)
-    print(f"queue rows: {len(queue)} " + " ".join(f"{what}={n}" for what, n in counts.items())
+    print(f"queue rows: {sum(counts.values())} " + " ".join(f"{what}={n}" for what, n in counts.items())
           + f" -> {len(kept)} left in {QUEUE}")
+    return kept, counts
+
+
+def main():
+    from seed.connector import fineract_client as fc, ok
+
+    run(fc, ok)
 
 
 if __name__ == "__main__":

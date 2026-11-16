@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reconciliation review</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1c2330; --soft:#5b6575; --line:#d9dee6; --accent:#1f5fbf;
+          --good:#17723b; --goodbg:#e4f4ea; --bad:#b3261e; --badbg:#fbe9e7; --warn:#8a5a00; --warnbg:#fff3d6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14181f; --card:#1d232d; --ink:#e7ebf1; --soft:#9aa5b5; --line:#313a48; --accent:#7fb0ff;
+            --good:#6fd596; --goodbg:#16311f; --bad:#ff9c93; --badbg:#3a1a17; --warn:#ffcf70; --warnbg:#3a2e12; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { background:var(--card); border-bottom:1px solid var(--line); padding:10px 20px; display:flex;
+           flex-wrap:wrap; gap:12px 20px; align-items:center; position:sticky; top:0; z-index:2; }
+  h1 { font-size:17px; margin:0; }
+  h2 { font-size:16px; margin:26px 0 8px; }
+  main { max-width:1180px; margin:0 auto; padding:16px 20px 60px; }
+  a { color:var(--accent); }
+  code, .mono { font-family:Consolas, "Cascadia Mono", monospace; font-size:13px; }
+  code { background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:0 4px; }
+  input[type=text] { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line);
+                     border-radius:6px; padding:6px 8px; }
+  button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink);
+           border-radius:6px; padding:6px 14px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  button.approve { background:var(--good); border-color:var(--good); color:var(--card); font-weight:600; }
+  button.reject { color:var(--bad); border-color:var(--bad); }
+  .tabs { display:flex; gap:4px; }
+  .tabs button { border:0; background:none; padding:6px 12px; border-bottom:3px solid transparent; border-radius:0; }
+  .tabs button.on { border-bottom-color:var(--accent); font-weight:600; }
+  .approver { margin-left:auto; display:flex; align-items:center; gap:8px; }
+  .approver input.missing { border-color:var(--bad); background:var(--badbg); }
+  .demo { background:var(--warnbg); color:var(--warn); font-weight:700; padding:2px 10px; border-radius:99px; }
+  .strip { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
+  .tile, .row, .box { background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  .tile { padding:10px 14px; }
+  .tile small { color:var(--soft); display:block; }
+  .tile b { font-size:19px; font-variant-numeric:tabular-nums; }
+  .row { padding:14px 16px; margin-top:12px; }
+  .row .top { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline; }
+  .row .amount { font-size:19px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .row .narration { margin:4px 0; overflow-wrap:anywhere; }
+  .soft { color:var(--soft); }
+  .reason { background:var(--warnbg); color:var(--warn); border-radius:6px; padding:3px 8px; display:inline-block; }
+  .problem { background:var(--badbg); color:var(--bad); border-radius:6px; padding:6px 10px; margin-top:8px; }
+  .done { background:var(--goodbg); color:var(--good); border-radius:6px; padding:6px 10px; margin-top:8px; }
+  .cands { display:flex; flex-wrap:wrap; gap:10px; margin:10px 0; }
+  .cand { border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-width:210px; flex:1 1 210px;
+          max-width:340px; display:block; cursor:pointer; }
+  .cand:has(input:checked) { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .cand b { display:block; }
+  .act { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .act input.note { flex:1 1 260px; }
+  .box { padding:14px 18px; margin-top:12px; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; vertical-align:top; padding:7px 10px; border-top:1px solid var(--line); }
+  th { color:var(--soft); font-weight:600; border-top:0; }
+  .pass { color:var(--good); font-weight:700; } .fail { color:var(--bad); font-weight:700; }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; overflow:auto;
+        font-family:Consolas, "Cascadia Mono", monospace; font-size:13px; }
+  li { margin:5px 0; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Reconciliation review</h1>
+  <span class="demo" id="demo" hidden>DEMO: made-up data, nothing is posted anywhere</span>
+  <nav class="tabs">
+    <button data-tab="review" class="on">Review</button>
+    <button data-tab="setup">Setup: connect your Fineract</button>
+  </nav>
+  <label class="approver">Approver <input type="text" id="approver" placeholder="your name" autocomplete="name"></label>
+</header>
+
+<main>
+<section id="review">
+  <div class="strip">
+    <div class="tile"><small>Payments posted</small><b id="s-payments">…</b></div>
+    <div class="tile"><small>Rupees posted</small><b id="s-amount">…</b></div>
+    <div class="tile"><small>Partner bank's share</small><b id="s-partner">…</b></div>
+    <div class="tile"><small>Lender's share</small><b id="s-lender">…</b></div>
+    <div class="tile"><small>Waiting for a person</small><b id="s-queue">…</b></div>
+    <div class="tile"><small>Loans in arrears</small><b id="s-arrears">–</b>
+      <button id="verify" title="Reads every loan from Fineract and checks the ledger against it. About 20 seconds for 260 loans.">Count</button>
+      <small id="s-verify"></small></div>
+    <div class="tile"><small>Partner report</small><a href="/partner_report.csv">Download CSV</a>
+      <small>one row per loan per month</small></div>
+  </div>
+  <div id="log"></div>
+  <div id="queue"></div>
+  <p class="soft">Each decision is written into <code>data\queue.csv</code>, then applied by <code>review.apply</code>:
+    the same file and the same code as the Excel workflow. Reject posts nothing and logs your note.</p>
+</section>
+
+<section id="setup" hidden>
+  <h2>1. Test the connection</h2>
+  <div class="box">
+    <p>Checks the Fineract this page is using. It only reads: one login call, then GET requests. Nothing is created or changed.</p>
+    <table id="settings"></table>
+    <p><button id="check">Test connection</button> <span id="check-state" class="soft"></span></p>
+    <table id="checks" hidden><thead><tr><th>Check</th><th>Result</th><th>What was found, and the fix</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <h2>2. How to connect your own Fineract</h2>
+  <div class="box">
+    <pre>
+  YOUR SIDE (already running)                THIS AGENT (this machine)
+
+  Bank ── statement CSV ───────────────────▶ data\bank_export.csv
+                                                   │ import, then match
+  Fineract ── loans + schedules (read) ────▶ matcher: post / queue / ignore
+     ▲                                             │
+     ├──── repayment, externalId = UTR ◀── clear lines (automatic)
+     ├──── repayment, externalId = UTR ◀── unclear lines, after a person approves here
+     │                                             │
+  Mifos web app (shows the same loans)       data\ledger.csv (80:20 split), data\audit.csv,
+  staff see each repayment on the loan       data\queue.csv, data\partner_report.csv</pre>
+    <ol>
+      <li><b>Make a Fineract user for the agent.</b> Do not use the admin account. In Mifos: Admin &gt; System &gt;
+        Manage Roles and Permissions, create a role with only the permissions in the table below, then
+        Admin &gt; Users, create a user with that role in the office that holds the loans.
+        <table>
+          <tr><th>Permission</th><th>Why the agent needs it</th></tr>
+          <tr><td><code>READ_LOAN</code></td><td>List loans, read schedules and transactions, find a repayment by its external id</td></tr>
+          <tr><td><code>REPAYMENT_LOAN</code></td><td>Post a repayment. This is the only thing it writes.</td></tr>
+          <tr><td><code>READ_PAYMENTTYPE</code></td><td>Look up the UPI / NEFT / IMPS / NACH payment types</td></tr>
+          <tr><td><code>READ_CURRENCY</code></td><td>Only for the INR check on this tab</td></tr>
+          <tr><td><code>READ_CLIENT</code></td><td>Only for <code>start.ps1</code>'s start-up check, which lists one client</td></tr>
+        </table>
+        <span class="soft">These five codes are in Fineract's own permission list (<code>GET /permissions</code> on the sandbox,
+        apache/fineract@7ac780192, 16 Nov 2026). Not yet tested: a full run as a user holding only these. Run "Test connection" as
+        that user first; a missing permission shows up there as error 403.</span></li>
+      <li><b>Put the connection in <code>.env</code></b> (project folder; git-ignored). The sandbox values are the example:
+        <table>
+          <tr><th>Setting</th><th>Meaning</th><th>Sandbox value</th></tr>
+          <tr><td><code>MIFOSX_BASE_URL</code></td><td>Fineract's API address, ending in <code>/fineract-provider/api/v1</code>.
+            Use <code>127.0.0.1</code> rather than <code>localhost</code> on Windows (each call to localhost waited 2 seconds).</td>
+            <td><code>http://127.0.0.1:4200/fineract-provider/api/v1</code></td></tr>
+          <tr><td><code>MIFOSX_TENANT_ID</code></td><td>The Fineract tenant</td><td><code>default</code></td></tr>
+          <tr><td><code>MIFOSX_USERNAME</code></td><td>The agent's Fineract user</td><td><code>mifos</code> (the sandbox admin)</td></tr>
+          <tr><td><code>MIFOSX_PASSWORD</code></td><td>Its password. Never shown on this page or in its log.</td><td>written by <code>start.ps1</code></td></tr>
+          <tr><td><code>BANK</code></td><td>Layout of your bank export, <code>data\bank_export.csv</code></td><td><code>hdfc</code> (the only one so far)</td></tr>
+          <tr><td><code>MIFOS_URL</code></td><td>Optional. Address of the Mifos web app, for the "open in Mifos" links, if it is not
+            the host in <code>MIFOSX_BASE_URL</code>.</td><td>not set (<code>http://127.0.0.1:4200</code> is worked out)</td></tr>
+          <tr><td><code>MIFOSX_SKIP_TLS_VERIFY</code></td><td>Optional. <code>true</code> only for an https test server with a self-signed certificate.</td><td>not set</td></tr>
+        </table></li>
+      <li><b>Start this page without the sandbox:</b> <code>.venv\Scripts\python -m ui.serve</code>.
+        (<code>.\start.ps1 -Ui</code> also starts the Docker sandbox, which you do not need for your own Fineract. Run plain
+        <code>.\start.ps1</code> once first: it creates <code>.venv</code> and fetches the connector.)</li>
+      <li><b>Press "Test connection"</b> above until every check passes.</li>
+      <li><b>Read the loans:</b> <code>.venv\Scripts\python -m statement.fetch_schedules</code> writes <code>data\schedules.json</code>.</li>
+      <li><b>Bring a bank statement</b> as <code>data\bank_export.csv</code>, then import and match without posting:
+        <code>.venv\Scripts\python -m statement.import_bank data\bank_export.csv --bank hdfc</code>, then
+        <code>.venv\Scripts\python -m matcher.run --bank hdfc</code>. Read <code>data\decisions.csv</code> before going on.</li>
+      <li><b>Post a few, look, then the rest:</b> <code>.venv\Scripts\python -m posting.run --limit 5</code>, check those five loans
+        in Mifos, then <code>posting.run</code>, <code>posting.verify</code>, <code>review.build</code>. The unclear lines then appear on the Review tab.</li>
+    </ol>
+    <p><b>Do not run <code>.\start.ps1 -Seed</code> or <code>seed.load_fineract</code> against a real Fineract.</b> The seed is for the
+      demo sandbox only: it enables currencies and creates payment types, a loan product, 200 clients and 260 back-dated loans.</p>
+  </div>
+
+  <h2>3. What the agent expects from your Fineract</h2>
+  <div class="box">
+    <table>
+      <tr><th>In Fineract</th><th>How the agent uses it</th></tr>
+      <tr><td>Each loan's <b>External Id</b></td><td>Your own loan reference. It becomes <code>loan_ref</code> everywhere: the matcher,
+        the queue, the ledger and the partner report. A loan with no External Id is known by its Fineract account number
+        instead (for example <code>000000042</code>). Excel drops leading zeros from such a number, so decide those lines on this page, not in Excel.</td></tr>
+      <tr><td>The <b>client's display name</b> on the loan</td><td>Matched against the payer's name in the bank narration. The first word is taken
+        as the first name and the rest as the surname.</td></tr>
+      <tr><td>The loan's <b>repayment schedule</b></td><td>Each instalment's due date and total due. A line is posted automatically only if its
+        amount equals an instalment exactly and its date is within 5 days of the due date.</td></tr>
+      <tr><td>The loan's <b>account number</b></td><td>A narration containing <code>SCPL</code> + the 9-digit account number names the loan directly.
+        This prefix is the synthetic lender's; a different one needs a one-line change in <code>matcher/match.py</code>.</td></tr>
+      <tr><td><b>Payment types</b> named UPI, NEFT, IMPS, NACH</td><td>The channel found in the narration is posted as the payment type. A missing type
+        does not stop the posting; the repayment just has none.</td></tr>
+      <tr><td><b>INR</b> as an enabled currency</td><td>Amounts are rupees with two decimals. Loans in another currency are not supported.</td></tr>
+      <tr><td>Repayment <b>External Id</b></td><td>The agent posts each repayment with the bank's UTR as the transaction's External Id (and as the
+        receipt number). Fineract keeps that unique, so the same bank line can never be posted twice, even from a second machine.</td></tr>
+    </table>
+    <p><b>What the agent never does.</b> It never creates or changes clients, loans, products, currencies or payment types (only the demo seed
+      does, and that is for the sandbox). It never reverses or edits a repayment. It never posts a line that fits two loans, an amount
+      that is not an instalment, or anything a person rejected. The only call that writes is
+      <code>POST /loans/{id}/transactions?command=repayment</code>.</p>
+  </div>
+
+  <h2>4. Where to see the results in Mifos</h2>
+  <div class="box">
+    <ul>
+      <li>Open a loan: <code id="pattern"></code><br>
+        <span class="soft">The two numbers are Fineract's client id and loan id (both are in <code>data\schedules.json</code>). The candidate
+        cards on the Review tab link to the loan's <code>/general</code> page the same way. Pattern read from the route table of
+        Mifos web app 1.14, the version in the sandbox.</span></li>
+      <li>On the loan's <b>Transactions</b> tab, each repayment the agent posted has the bank's UTR in the <b>External Id</b> column.
+        Open the transaction to see its payment details: payment type and receipt number (the UTR again).</li>
+      <li>The loan's <b>Repayment Schedule</b> tab shows the instalment as paid, and the loan leaves arrears once nothing is overdue.</li>
+      <li>From the API: <code>GET /loans/{loanId}/transactions/external-id/{UTR}</code> returns the repayment.</li>
+    </ul>
+  </div>
+
+  <h2>5. If something goes wrong</h2>
+  <div class="box">
+    <table>
+      <tr><th>What you see</th><th>What to do</th></tr>
+      <tr><td><code>Connection failed</code>, or check 1 fails</td><td>Fineract is not running or <code>MIFOSX_BASE_URL</code> is wrong. It must end in
+        <code>/fineract-provider/api/v1</code>. Restart this page after changing <code>.env</code>.</td></tr>
+      <tr><td><code>Error 400</code> on every call</td><td>Unknown tenant: fix <code>MIFOSX_TENANT_ID</code>.</td></tr>
+      <tr><td><code>Error 401</code></td><td>Wrong user or password in <code>.env</code>.</td></tr>
+      <tr><td><code>Error 403</code></td><td>The user lacks a permission (table in step 1) or cannot see the loans' office.</td></tr>
+      <tr><td>Everything is slow (2 seconds a call)</td><td>Use <code>127.0.0.1</code> instead of <code>localhost</code> in <code>MIFOSX_BASE_URL</code>.</td></tr>
+      <tr><td>A row says <code>loan_ref '…' is not a known loan</code></td><td>The loan is newer than <code>data\schedules.json</code>, or the reference is
+        mistyped. Run <code>statement.fetch_schedules</code> again.</td></tr>
+      <tr><td><code>queue.csv is open in another program</code></td><td>Close it in Excel, then press the button again.</td></tr>
+      <tr><td><code>this txn_id is already in Fineract, but not on this loan</code></td><td>That UTR was posted to another loan earlier. Find it in Mifos
+        before deciding; the agent will not post it a second time.</td></tr>
+      <tr><td>The queue is empty</td><td>Nothing is waiting. New unclear lines arrive with the next <code>.\start.ps1 -Reconcile</code> or <code>review.build</code>.</td></tr>
+      <tr><td>"this page is out of date: reload it"</td><td>The server was restarted. Reload the page.</td></tr>
+      <tr><td>The Mifos link asks you to log in</td><td>Log in to Mifos once in this browser at the address the link uses, then click the link again.</td></tr>
+    </table>
+  </div>
+</section>
+</main>
+
+<script>
+const CONFIG = __CONFIG__;
+const $ = id => document.getElementById(id);
+const rupees = text => "₹" + Number(text).toLocaleString("en-IN", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+// Bank narrations and names are other people's text: always set as text, never as HTML.
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key === "class") node.className = value; else if (key in node) node[key] = value; else node.setAttribute(key, value);
+  }
+  node.append(...children.filter(child => child !== null && child !== ""));
+  return node;
+}
+
+async function call(path, body) {
+  const options = body ? {method: "POST", headers: {"Content-Type": "application/json", "X-Token": CONFIG.token},
+                          body: JSON.stringify(body)} : {};
+  try {
+    const response = await fetch(path, options);
+    const data = await response.json();
+    return response.ok ? data : {error: data.error || "the server answered " + response.status};
+  } catch (error) {
+    return {error: "The page's server is not answering. Is `python -m ui.serve` still running?"};
+  }
+}
+
+const mifosLoan = (c, page) => `${CONFIG.mifos}/#/clients/${c.client_id}/loans-accounts/${c.loan_id}/${page}`;
+
+function approver() {
+  const name = $("approver").value.trim();
+  $("approver").classList.toggle("missing", !name);
+  if (!name) $("approver").focus();
+  return name;
+}
+
+function renderRow(row) {
+  const radio = "pick-" + row.txn_id;
+  const other = el("input", {type: "text", placeholder: "loan_ref", size: 12,
+                             value: row.candidates.some(c => c.loan_ref === row.loan_ref) ? "" : row.loan_ref});
+  const otherRadio = el("input", {type: "radio", name: radio, value: "", checked: !!other.value});
+  other.addEventListener("input", () => { otherRadio.checked = true; });
+  const cards = row.candidates.map(c => el("label", {class: "cand"},
+    el("input", {type: "radio", name: radio, value: c.loan_ref,
+                 checked: row.loan_ref ? c.loan_ref === row.loan_ref : row.candidates.length === 1}),
+    " ", el("span", {class: "mono"}, c.loan_ref),
+    el("b", {}, c.borrower),
+    el("span", {}, `${rupees(c.amount)} due ${c.due}`), el("br"),
+    c.loan_id ? el("a", {href: mifosLoan(c, "general"), target: "_blank", rel: "noopener"}, "Open in Mifos") : null));
+  const note = el("input", {type: "text", class: "note", placeholder: "note: why (goes in the audit log)", value: row.note});
+  const message = el("div", {class: "problem", hidden: !row.problem}, row.problem ? "Refused: " + row.problem : "");
+  const approve = el("button", {class: "approve"}, "Approve and post");
+  const reject = el("button", {class: "reject"}, "Reject");
+  const box = el("div", {class: "row"},
+    el("div", {class: "top"}, el("span", {}, row.date), el("span", {class: "amount"}, rupees(row.amount)),
+       el("span", {class: "soft mono"}, "UTR " + row.txn_id)),
+    el("div", {class: "narration mono"}, row.narration),
+    el("span", {class: "reason"}, "Why it is here: " + row.reason),
+    el("div", {class: "cands"}, ...cards,
+       el("label", {class: "cand"}, otherRadio, row.candidates.length ? " another loan " : " no candidate found; the loan is ", other)),
+    el("div", {class: "act"}, note, approve, reject),
+    message);
+
+  async function send(decision) {
+    const name = approver();
+    const fail = text => { message.textContent = text; message.hidden = false; };
+    if (!name) return fail("Type your name in the Approver box at the top first.");
+    const picked = box.querySelector(`input[name="${radio}"]:checked`);
+    const loan = decision === "post" ? (picked ? picked.value || other.value.trim() : "") : "";
+    if (decision === "post" && !loan) return fail("Choose a loan, or type its loan_ref, before approving.");
+    const ask = decision === "post" ? `Post ${rupees(row.amount)} to ${loan} as ${name}?`
+                                    : `Reject this ${rupees(row.amount)} line as ${name}? Nothing is posted.`;
+    if (!confirm(ask)) return;
+    approve.disabled = reject.disabled = true;
+    const result = await call("/api/decide", {txn_id: row.txn_id, decision, loan_ref: loan, approver: name, note: note.value});
+    approve.disabled = reject.disabled = false;
+    if (result.done) {
+      $("log").prepend(el("div", {class: "done"}, `UTR ${row.txn_id}, ${rupees(row.amount)}: ${result.done}` +
+                                                  (decision === "post" ? ` to ${loan}` : "") + ` by ${name}.`));
+      return load();
+    }
+    fail("Refused: " + (result.problem || result.error));
+  }
+  approve.addEventListener("click", () => send("post"));
+  reject.addEventListener("click", () => send("reject"));
+  return box;
+}
+
+async function load() {
+  const state = await call("/api/state");
+  if (state.error) return $("queue").replaceChildren(el("div", {class: "problem"}, state.error));
+  const s = state.summary;
+  $("s-payments").textContent = s.payments.toLocaleString("en-IN");
+  $("s-amount").textContent = rupees(s.amount);
+  $("s-partner").textContent = rupees(s.partner_share);
+  $("s-lender").textContent = rupees(s.lender_share);
+  $("s-queue").textContent = s.queue;
+  $("queue").replaceChildren(...(state.queue.length ? state.queue.map(renderRow) : [el("div", {class: "box soft"},
+    "Nothing is waiting for a decision. New unclear lines arrive with the next .\\start.ps1 -Reconcile (or python -m review.build).")]));
+}
+
+$("verify").addEventListener("click", async () => {
+  $("verify").disabled = true;
+  $("s-verify").textContent = "reading every loan from Fineract…";
+  const v = await call("/api/verify");
+  $("verify").disabled = false;
+  if (v.error) return void ($("s-verify").textContent = v.error);
+  $("s-arrears").textContent = `${v.arrears} of ${v.loans}`;
+  $("s-verify").textContent = `ledger against Fineract: ${v.checked} rows, ${v.problems.length} problems` +
+                              (v.problems.length ? ": " + v.problems.slice(0, 3).join("; ") : "");
+});
+
+$("check").addEventListener("click", async () => {
+  $("check").disabled = true;
+  $("check-state").textContent = "checking…";
+  const results = await call("/api/check");
+  $("check").disabled = false;
+  if (results.error) return void ($("check-state").textContent = results.error);
+  const failed = results.filter(r => r.ok === false).length;
+  $("check-state").textContent = failed ? `${failed} to fix` : "all checks passed";
+  $("checks").hidden = false;
+  $("checks").tBodies[0].replaceChildren(...results.map(r => el("tr", {},
+    el("td", {}, r.check),
+    el("td", {class: r.ok ? "pass" : r.ok === false ? "fail" : "soft"}, r.ok ? "PASS" : r.ok === false ? "FAIL" : "not run"),
+    el("td", {}, el("div", {class: r.ok === false ? "mono" : ""}, r.detail), r.fix ? el("div", {}, el("b", {}, "Fix: "), r.fix) : null))));
+});
+
+for (const tab of document.querySelectorAll(".tabs button")) {
+  tab.addEventListener("click", () => {
+    for (const other of document.querySelectorAll(".tabs button")) {
+      other.classList.toggle("on", other === tab);
+      $(other.dataset.tab).hidden = other !== tab;
+    }
+  });
+}
+
+if (location.hash === "#setup") document.querySelector('[data-tab="setup"]').click();  // so the README can link to the guide
+$("demo").hidden = !CONFIG.demo;
+$("pattern").textContent = `${CONFIG.mifos}/#/clients/{clientId}/loans-accounts/{loanId}/transactions`;
+$("settings").replaceChildren(el("tr", {}, el("th", {}, "In use now (.env)"), el("th", {}, "")),
+  ...Object.entries(CONFIG.settings).map(([key, value]) => el("tr", {}, el("td", {}, el("code", {}, key)), el("td", {class: "mono"}, value || "(not set)"))),
+  el("tr", {}, el("td", {}, el("code", {}, "MIFOSX_PASSWORD")), el("td", {class: "soft"}, "set in .env; never shown here")));
+try { $("approver").value = localStorage.getItem("approver") || ""; } catch (error) { /* private window: just not remembered */ }
+$("approver").addEventListener("input", () => {
+  $("approver").classList.remove("missing");
+  try { localStorage.setItem("approver", $("approver").value.trim()); } catch (error) { /* as above */ }
+});
+load();
+</script>
+</body>
+</html>

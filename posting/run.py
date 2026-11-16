@@ -13,7 +13,6 @@ from datetime import datetime
 from pathlib import Path
 
 from posting.post import handled, post_all
-from seed.connector import fineract_client as fc, ok
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 LEDGER = ["txn_id", "date", "loan_ref", "fineract_txn_id", "amount", "partner_share", "lender_share"]
@@ -31,7 +30,9 @@ def read(name: str) -> list[dict]:
 def appender(name: str, fields: list[str]):
     path = DATA / name
     new = not path.exists()
-    f = path.open("a", newline="")
+    # backslashreplace: a note typed in the review page may hold a character this machine's encoding
+    # lacks (a rupee sign, Hindi). It is written as \uXXXX; failing here would lose the row after the post.
+    f = path.open("a", newline="", errors="backslashreplace")
     writer = csv.DictWriter(f, fieldnames=fields)
     if new:
         writer.writeheader()
@@ -40,10 +41,13 @@ def appender(name: str, fields: list[str]):
         writer.writerow(row)
         f.flush()  # each row reaches the disk before the next post, so a crash loses at most one
 
+    write.close = f.close  # for the review page, which keeps running; a command just ends
     return write
 
 
 def main():
+    from seed.connector import fineract_client as fc, ok  # here: the review page reads the files without it
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, help="only the first N `post` decisions: a quick trial")
     args = parser.parse_args()

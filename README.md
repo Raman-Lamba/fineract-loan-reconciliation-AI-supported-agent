@@ -17,6 +17,9 @@ wrong, 273 queued for a person, ledger and partner report equal to Fineract.
 | 3 | Matcher: post, queue or ignore each line, with a reason | built |
 | 4 | Post repayments (UTR as `externalId`), 80:20 split ledger | built |
 | 5 | Review queue a person edits in Excel, partner report, end-to-end demo | built |
+| UI | Local review page for the same queue, and a setup guide with a live connection test ([Review page](#review-page)) | built |
+
+Connecting it to a Fineract and Mifos of your own: [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos).
 
 ## Terms
 
@@ -42,6 +45,9 @@ and can be used without `-Seed` once the loans are loaded. If `data\bank_export.
 file instead of generating the synthetic statement ([Use your own bank statement](#use-your-own-bank-statement))
 and prints which source it used. It never runs `review.apply`: posting what a
 person decided is a separate step ([Review queue](#review-queue)).
+
+`.\start.ps1 -Ui` does the same start-up checks and then serves the [review page](#review-page) at
+http://127.0.0.1:8000 until you press Ctrl+C. It can be combined with the other switches and runs last.
 
 The script is safe to re-run after a reboot. On first run it clones the connector (pinned commit) into
 `vendor/`, generates the sandbox secrets, starts the sandbox, writes `.env`, and creates `.venv`.
@@ -305,6 +311,189 @@ Loans in arrears fell from 194 to 144. All 144 are explained, read loan by loan 
 Five loans now show as `Overpaid` in Fineract because overpaid lines were posted in full. What to do with
 the extra (refund it or hold it) is a decision this project leaves to a person.
 
+## Review page
+
+A local web page for the same queue, for people who would rather click than edit a CSV. Python's standard
+library only: nothing to install, no build step.
+
+```powershell
+.\start.ps1 -Ui                          # sandbox up, then the page at http://127.0.0.1:8000
+.venv\Scripts\python -m ui.serve         # the page alone (Fineract already running); --port 8010 for another port
+.venv\Scripts\python -m ui.serve --demo  # a made-up queue and a made-up Fineract: try it without posting anywhere
+```
+
+- **Review tab.** Every line in `data\queue.csv` with its date, amount, narration and the reason it is there.
+  The candidate loans sit side by side (borrower, loan_ref, the instalment due and its amount), each with a
+  link that opens the loan in Mifos. Choose a candidate or type a loan_ref, add a note, then Approve or
+  Reject. The Approver box at the top is required and is remembered by the browser.
+- **It is the CSV workflow, not a second one.** A click writes `decision`, `loan_ref`, `approver` and `note`
+  into `data\queue.csv`, exactly as a person would in Excel, then runs `review.apply` on that one row. So the
+  duplicate guard, the 80:20 split, the ledger row and the audit row are the same code. Rows other people
+  filled in Excel are left alone until someone runs `review.apply`. If `review.apply` refuses a row (unknown
+  loan_ref, no approver, Fineract said no), the problem appears on the row and stays in the file.
+- **Summary strip.** Payments posted, rupees, the partner bank's and the lender's share, queue size, and a
+  Count button for loans in arrears (it reads every loan from Fineract and checks the ledger against it, as
+  `posting.verify` does; about 20 seconds for 260 loans). The partner report link rebuilds
+  `data\partner_report.csv` from the ledger and downloads it.
+- **Setup tab** (http://127.0.0.1:8000/#setup). A read-only connection test and the guide in the next section.
+- **Safety.** It listens on 127.0.0.1 only and refuses a request whose Host header is not this machine.
+  Anything that changes data is a POST carrying a token made new each run and written into the page. The
+  Fineract password is never sent to the browser or logged.
+- **Limit.** One local user, no login: the approver is whatever name is typed. More than one reviewer, or
+  any use beyond this machine, needs real accounts first, because that name is the audit trail.
+
+Design: [docs/superpowers/specs/2026-11-16-ui-design.md](docs/superpowers/specs/2026-11-16-ui-design.md).
+
+**What was checked** (16 Nov 2026). Against the live sandbox, over HTTP: the page, the queue (empty: the
+sandbox is fully reconciled), the summary (1,605 payments, 22,058,241.68 rupees), all seven connection checks
+passing in 1.7 seconds, the arrears count (145 of 260, 0 ledger problems, 22 seconds), the partner report
+download, and the refusals (wrong Host, no token, wrong token, a txn_id not in the queue). Nothing was
+approved or rejected on the sandbox: `ledger.csv` and `audit.csv` had the same sha256 before and after.
+Approve, reject and a refused row were run over HTTP in `--demo` mode and in the unit tests, not against the
+sandbox. The page was rendered in headless Chrome (both tabs); nobody has clicked through it in a browser yet.
+
+## Connect to your own Fineract and Mifos
+
+The same guide is on the page's Setup tab, with a "Test connection" button.
+
+```
+  YOUR SIDE (already running)                THIS AGENT (this machine)
+
+  Bank -- statement CSV -------------------> data\bank_export.csv
+                                                   | import, then match
+  Fineract -- loans + schedules (read) ----> matcher: post / queue / ignore
+     ^                                             |
+     |---- repayment, externalId = UTR <---- clear lines (automatic)
+     |---- repayment, externalId = UTR <---- unclear lines, after a person approves
+     |                                             |
+  Mifos web app (shows the same loans)       data\ledger.csv (80:20 split), data\audit.csv,
+  staff see each repayment on the loan       data\queue.csv, data\partner_report.csv
+```
+
+Fineract is the loan system. Mifos is its web app: the agent never talks to Mifos, it only links to it.
+The agent reads loans and schedules from Fineract's API and writes one thing back: repayments.
+
+### Steps
+
+1. **Make a Fineract user for the agent. Do not use the admin account.** In Mifos: Admin > System > Manage
+   Roles and Permissions, create a role with only these permissions; then Admin > Users, create a user with
+   that role in the office that holds the loans.
+
+   | Permission | Why the agent needs it |
+   |---|---|
+   | `READ_LOAN` | List loans, read schedules and transactions, find a repayment by its external id |
+   | `REPAYMENT_LOAN` | Post a repayment. This is the only thing it writes. |
+   | `READ_PAYMENTTYPE` | Look up the UPI / NEFT / IMPS / NACH payment types |
+   | `READ_CURRENCY` | Only for the INR check on the Setup tab |
+   | `READ_CLIENT` | Only for `start.ps1`'s start-up check, which lists one client |
+
+   These five codes are in Fineract's own permission list (`GET /permissions` on the sandbox,
+   `apache/fineract@7ac780192`, 16 Nov 2026). **Not tested: a full run as a user holding only these.** The
+   sandbox was only ever used as its admin. Run "Test connection" as the new user first; a missing
+   permission shows there as error 403.
+2. **Get the code ready.** `.\start.ps1` does it, but it also needs Docker and starts the sandbox. Without
+   Docker, these are the same steps by hand (not run separately from `start.ps1` so far):
+
+   ```powershell
+   git -c core.autocrlf=false clone https://github.com/openMF/mcp-mifosx.git vendor\mcp-mifosx
+   git -C vendor\mcp-mifosx checkout be806dbd36daf510dcd787d911dfeab4471a1a8c
+   python -m venv .venv
+   .venv\Scripts\python -m pip install -r vendor\mcp-mifosx\python\requirements.txt
+   ```
+3. **Put the connection in `.env`** in the project folder (git-ignored; copy `.env.example`). The sandbox
+   values are the example:
+
+   | Setting | Meaning | Sandbox value |
+   |---|---|---|
+   | `MIFOSX_BASE_URL` | Fineract's API address, ending in `/fineract-provider/api/v1` | `http://127.0.0.1:4200/fineract-provider/api/v1` |
+   | `MIFOSX_TENANT_ID` | The Fineract tenant | `default` |
+   | `MIFOSX_USERNAME` | The agent's Fineract user | `mifos` (the sandbox admin) |
+   | `MIFOSX_PASSWORD` | Its password | written by `start.ps1` |
+   | `BANK` | Layout of your bank export, `data\bank_export.csv` | `hdfc` (the only one so far) |
+   | `MIFOS_URL` | Optional. The Mifos web app's address, for the "Open in Mifos" links, if it is not the host in `MIFOSX_BASE_URL` | not set |
+   | `MIFOSX_SKIP_TLS_VERIFY` | Optional. `true` only for an https test server with a self-signed certificate | not set |
+
+   `start.ps1` only writes `.env` when there is none, so your values are kept.
+4. **Start the page and test:** `.venv\Scripts\python -m ui.serve`, open http://127.0.0.1:8000/#setup, press
+   "Test connection". It only reads (one login call, then GETs) and reports seven checks as pass or fail,
+   each with its fix: Fineract answers at the URL, the tenant exists, the login works, INR is enabled, the
+   four payment types exist, loans exist (and how many have an externalId), a loan's schedule can be read.
+5. **Read the loans:** `.venv\Scripts\python -m statement.fetch_schedules` writes `data\schedules.json`.
+6. **Bring a bank statement** ([Use your own bank statement](#use-your-own-bank-statement)), import and match
+   it. Nothing is posted yet. Read `data\decisions.csv` before going on.
+
+   ```powershell
+   .venv\Scripts\python -m statement.import_bank data\bank_export.csv --bank hdfc
+   .venv\Scripts\python -m matcher.run --bank hdfc
+   ```
+7. **Post five, look at them in Mifos, then the rest:**
+
+   ```powershell
+   .venv\Scripts\python -m posting.run --limit 5
+   .venv\Scripts\python -m posting.run
+   .venv\Scripts\python -m posting.verify
+   .venv\Scripts\python -m review.build     # the unclear lines, for the Review tab or Excel
+   ```
+
+**Do not run `.\start.ps1 -Seed`, `-Seed -Reconcile` or `seed.load_fineract` against a real Fineract.** The
+seed is for the demo sandbox only: it enables currencies and creates payment types, a loan product, 200
+clients and 260 back-dated loans. Against your own Fineract use the commands above, or `.\start.ps1
+-Reconcile` without `-Seed` once `data\bank_export.csv` is in place and you have done a trial with `--limit`.
+
+### What the agent expects from your Fineract
+
+| In Fineract | How the agent uses it |
+|---|---|
+| Each loan's **External Id** | Your own loan reference. It becomes `loan_ref` everywhere: the matcher, the queue, the ledger and the partner report. A loan with no External Id is known by its Fineract account number instead (such as `000000042`). Excel drops the leading zeros of such a number, so decide those lines on the review page, not in Excel. |
+| The **client's display name** on the loan | Matched against the payer's name in the bank narration. The first word is taken as the first name and the rest as the surname. |
+| The loan's **repayment schedule** | Each instalment's due date and total due. A line is posted automatically only if its amount equals an instalment exactly and its date is within 5 days of the due date. |
+| The loan's **account number** | A narration containing `SCPL` + the 9-digit account number names the loan directly. The prefix is the synthetic lender's; another one is a one-line change in `matcher/match.py`. |
+| **Payment types** named UPI, NEFT, IMPS, NACH | The channel found in the narration is posted as the payment type. A missing type does not stop the posting; the repayment just has none. |
+| **INR** as an enabled currency | Amounts are rupees with two decimals. Loans in another currency are not supported. |
+| Repayment **External Id** | Each repayment is posted with the bank's UTR as the transaction's External Id (and as its receipt number). Fineract keeps that unique, so one bank line can never be posted twice, even from a second machine. |
+
+**What the agent never does.** It never creates or changes clients, loans, products, currencies or payment
+types (only the demo seed does). It never reverses or edits a repayment. It never posts a line that fits two
+loans, an amount that is not an instalment, or anything a person rejected. Its only writing call is
+`POST /loans/{id}/transactions?command=repayment`.
+
+Until this change `statement.fetch_schedules` skipped loans with no External Id. It now takes them with their
+account number as `loan_ref` (covered by a unit test; the sandbox has no such loan, all 260 have an External
+Id, so it has not run against a live one).
+
+### Where to see the results in Mifos
+
+- Open a loan: `http://localhost:4200/#/clients/{clientId}/loans-accounts/{loanId}/transactions` (use your
+  Mifos address). The two numbers are Fineract's client id and loan id; both are in `data\schedules.json`.
+  The review page's "Open in Mifos" links use the same pattern ending in `/general`.
+- On the loan's **Transactions** tab each repayment the agent posted has the bank's UTR in the **External
+  Id** column. Open the transaction for its payment details: payment type and receipt number (the UTR again).
+- The loan's **Repayment Schedule** tab shows the instalment as paid.
+- From the API: `GET /loans/{loanId}/transactions/external-id/{UTR}`.
+
+How this was verified: the URL pattern, the Transactions columns and the payment details panel were read
+from the code of the Mifos web app the sandbox runs (`openmf/web-app:1.14`: hash routing, routes
+`clients/:clientId` > `loans-accounts` > `:loanId` > `general` / `transactions` / `transactions/:id`). They were
+not clicked through in a logged-in browser. The menu names in step 1 come from the same code.
+
+### Troubleshooting
+
+| What you see | What to do |
+|---|---|
+| `Connection failed`, or the first check fails | Fineract is not running or `MIFOSX_BASE_URL` is wrong. It must end in `/fineract-provider/api/v1`. Restart the page after changing `.env`. |
+| `Error 400` on every call | Unknown tenant: fix `MIFOSX_TENANT_ID`. |
+| `Error 401` | Wrong user or password in `.env`. |
+| `Error 403` | The user lacks a permission (step 1) or cannot see the loans' office. |
+| Everything is slow (2 seconds a call) | Use `127.0.0.1` instead of `localhost` in `MIFOSX_BASE_URL`. |
+| `Connector not found in vendor/mcp-mifosx` | Do step 2. |
+| `loan_ref '...' is not a known loan` | The loan is newer than `data\schedules.json`, or the reference is mistyped. Run `statement.fetch_schedules` again. |
+| `queue.csv is open in another program` | Close it in Excel, then press the button again. |
+| `this txn_id is already in Fineract, but not on this loan` | That UTR was posted to another loan earlier. Find it in Mifos before deciding; the agent will not post it a second time. |
+| The queue is empty | Nothing is waiting. New unclear lines arrive with the next `.\start.ps1 -Reconcile` or `review.build`. |
+| "this page is out of date: reload it" | The page's server was restarted. Reload. |
+| The Mifos link asks you to log in | Log in to Mifos once in that browser at the address the link uses (`127.0.0.1` and `localhost` count as different sites), then click again. |
+| `cannot listen on 127.0.0.1:8000` | Another program has the port: `python -m ui.serve --port 8010`. |
+
 ## Run the whole thing
 
 From an empty machine to a reconciled book, in order. The first command does steps 1 to 9 of the list below (about 15 minutes from a wiped sandbox).
@@ -315,6 +504,7 @@ From an empty machine to a reconciled book, in order. The first command does ste
 .venv\Scripts\python -m review.apply
 .venv\Scripts\python -m posting.verify
 .venv\Scripts\python -m review.report
+.venv\Scripts\python -m ui.serve          # optional: the review page, http://127.0.0.1:8000
 ```
 
 The same thing one module at a time, with the sandbox already running:
