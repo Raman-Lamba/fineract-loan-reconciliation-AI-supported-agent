@@ -5,8 +5,9 @@ and splits each one between the lender and its partner bank. See [spec.md](spec.
 All data is synthetic. This is a portfolio project, not a production or regulator-approved system.
 
 **Status: milestone 3 (matcher with an accuracy report; nothing is posted yet).** Milestone 1 ran against a live
-Fineract on 16 Nov 2026: 200 clients and 249 of 250 loans loaded. Loan L0202 is missing because an early
-trial run activated its borrower too late; a wipe and reseed (below) would load all 250.
+Fineract on 16 Nov 2026: 200 clients and 259 of 260 loans loaded (L0251-L0260 are same-name twins). Loan
+L0202 is missing because an early trial run activated its borrower too late; a wipe and reseed (below)
+would load all 260.
 
 | Milestone | What | State |
 |---|---|---|
