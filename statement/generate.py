@@ -1,6 +1,9 @@
 """Turns loan schedules into a messy bank statement plus an answer key. Pure: no I/O in generate().
 
-Run:  python -m statement.generate     (reads data/schedules.json, writes data/*.csv)
+Run:  python -m statement.generate [--hdfc]     (reads data/schedules.json, writes data/*.csv)
+
+--hdfc also writes the same statement laid out like an HDFC net-banking export (data/bank_export_hdfc.csv),
+to test statement.import_bank and the matcher's HDFC narration formats against the answer key.
 
 The statement is all the agent may see. The answer key says, per line, what a careful person would do:
 post (to expected_loan_ref), queue (a person decides), ignore (duplicate), or none (missed: no line).
@@ -9,10 +12,13 @@ true_loan_ref is the loan whose borrower really paid, whatever the outcome: only
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import random
+import re
 from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 CUTOFF = date(2026, 10, 31)
@@ -139,6 +145,58 @@ def generate(schedules: list[dict], seed: int = 20261116) -> tuple[list[dict], l
     return lines, key
 
 
+HDFC_HEADER = ["Date", "Narration", "Chq./Ref.No.", "Value Dt", "Withdrawal Amt.", "Deposit Amt.", "Closing Balance"]
+DEBIT_EVERY = 40  # one debit row (bank charges) after every 40 credits
+
+
+def _indian(amount: Decimal) -> str:
+    """121940.65 -> 1,21,940.65: the last three digits, then groups of two."""
+    whole, paise = f"{amount:.2f}".split(".")
+    return re.sub(r"(?<=\d)(?=(\d\d)*\d{3}$)", ",", whole) + "." + paise
+
+
+def _hdfc_narration(txn: str, narration: str) -> str:
+    """A synthetic narration rewritten in HDFC's layout (unverified, from secondary sources)."""
+    if narration.startswith("UPI/"):
+        _, _, name, vpa, *memo = narration.split("/")
+        return f"UPI-{name}-{vpa}-UTIB0000001-{txn}-{memo[0] if memo else 'UPI'}"
+    if narration.startswith("NEFT-"):  # the comma is on purpose: the cell has to be quoted
+        return f"NEFT CR-SBIN0000001-{narration.split('-')[2]}-SCPL COLLECTIONS A/C, MUMBAI-SBINR5{txn}"
+    if narration.startswith("IMPS/"):
+        _, _, _, name, *memo = narration.split("/")
+        return f"IMPS-{txn}-{name}-SBIN-XXXXXXXX{txn[-4:]}-{memo[0] if memo else 'IMPS'}"
+    _, _, account, memo, mandate = narration.split("/")  # NACH
+    return f"NACH-CR-{account}-{memo}-UMRN HDFC70200000{mandate}"
+
+
+def hdfc_export(lines: list[dict]) -> list[list[str]]:
+    """The statement as the rows of an HDFC-style export: preamble, header, credits with debits mixed in,
+    footer. Pure, and draws nothing from the random stream, so the statement itself does not change."""
+    ddmmyy = lambda iso: date.fromisoformat(iso).strftime("%d/%m/%y")  # noqa: E731
+    stars = ["*" * 8] * len(HDFC_HEADER)
+    rows = [["SYNTHETIC DATA - not a real bank statement"], ["Account Branch : SAMPLE BRANCH"],
+            ["Account No : 50200000000000 CURRENT ACCOUNT"],
+            [f"Statement From : {ddmmyy(lines[0]['date'])} To : {ddmmyy(lines[-1]['date'])}"], [],
+            HDFC_HEADER, stars]
+    balance, debits, charge = Decimal(0), Decimal(0), Decimal("590.00")
+    for i, line in enumerate(lines, 1):
+        day, amount = ddmmyy(line["date"]), Decimal(line["amount"])
+        balance += amount
+        # The reference column is zero-padded to 16, as HDFC's is. Some UPI rows leave it all zeros, so
+        # the importer has to fall back to the reference inside the narration.
+        in_column = not (line["narration"].startswith("UPI/") and line["txn_id"].endswith("0"))
+        rows.append([day, _hdfc_narration(line["txn_id"], line["narration"]),
+                     line["txn_id"].zfill(16) if in_column else "0" * 16, day, "", _indian(amount), _indian(balance)])
+        if i % DEBIT_EVERY == 0:
+            balance, debits = balance - charge, debits + charge
+            rows.append([day, "SMS ALERT CHARGES, GST INCL", "0" * 16, day, _indian(charge), "", _indian(balance)])
+    credits = sum(Decimal(line["amount"]) for line in lines)
+    rows += [stars, ["STATEMENT SUMMARY :-"],
+             ["Opening Balance", "Dr Count", "Cr Count", "Debits", "Credits", "Closing Bal"],
+             ["0.00", str(len(lines) // DEBIT_EVERY), str(len(lines)), _indian(debits), _indian(credits), _indian(balance)]]
+    return rows
+
+
 def _write(path: Path, rows: list[dict]):
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
@@ -147,6 +205,9 @@ def _write(path: Path, rows: list[dict]):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--hdfc", action="store_true", help="also write data/bank_export_hdfc.csv")
+    args = parser.parse_args()
     data = Path(__file__).resolve().parents[1] / "data"
     schedules = json.loads((data / "schedules.json").read_text())
     lines, key = generate(schedules)
@@ -157,6 +218,10 @@ def main():
         counts[row["case"]] = counts.get(row["case"], 0) + 1
     print(f"statement lines: {len(lines)} answer key rows: {len(key)}")
     print("cases: " + ", ".join(f"{c}={n}" for c, n in sorted(counts.items(), key=lambda x: -x[1])))
+    if args.hdfc:
+        with (data / "bank_export_hdfc.csv").open("w", newline="") as f:
+            csv.writer(f).writerows(hdfc_export(lines))
+        print("HDFC-layout export of the same statement: data/bank_export_hdfc.csv")
 
 
 if __name__ == "__main__":

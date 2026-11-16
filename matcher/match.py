@@ -3,7 +3,8 @@
 Pure: no I/O. Rules, in order (docs/superpowers/specs/2026-11-16-matcher-design.md):
 1. a txn_id already seen in this statement -> ignore
 2. a loan account in the narration (SCPL + 9 digits) -> that loan, if the amount is due
-3. the payer's name -> the one loan whose borrower and instalment fit; anything else is queued
+3. the payer's name (read with the bank's entry in FORMATS) -> the one loan whose borrower and
+   instalment fit; anything else is queued
 
 It never picks between loans: two that fit, or none, go to a person with the candidates and the reason.
 """
@@ -19,15 +20,25 @@ def _paise(amount) -> int:
     return round(float(amount) * 100)
 
 
-def payer_name(narration: str) -> str:
-    """The name field of a UPI, NEFT or IMPS narration, or '' if there is none."""
-    slashed, dashed = narration.split("/"), narration.split("-")
-    if slashed[0] == "UPI" and len(slashed) > 2:
-        return slashed[2]
-    if slashed[0] == "IMPS" and len(slashed) > 3:
-        return slashed[3]
-    if dashed[0] == "NEFT" and len(dashed) > 2:
-        return dashed[2]
+# One entry per narration format: (how the line starts, field separator, position of the payer's name).
+# A bank is one line. Only "synthetic" (statement.generate) has been checked against real files of ours;
+# the bank layouts come from secondary sources and no real export was used. Two banks start a line the
+# same way with the name elsewhere (UPI/, IMPS-), so the bank has to be given: it is never worked out.
+# shortcut: positions are unverified, check each against a real export of that bank before relying on it.
+FORMATS = {
+    "synthetic": [("UPI/", "/", 2), ("IMPS/", "/", 3), ("NEFT-", "-", 2)],
+    "hdfc": [("UPI-", "-", 1), ("NEFT CR-", "-", 2), ("IMPS-", "-", 2)],
+    "icici": [("UPI/", "/", 3), ("INF/NEFT/", "/", 4), ("MMT/IMPS/", "/", 4)],
+    "sbi": [("NEFT-CR-", "-", 3), ("IMPS-", "-", 2)],
+}
+
+
+def payer_name(narration: str, bank: str = "synthetic") -> str:
+    """The name field of a UPI, NEFT or IMPS narration in this bank's layout, or '' if there is none."""
+    for start, separator, position in FORMATS[bank]:
+        if narration.upper().startswith(start):
+            fields = narration.split(separator)
+            return fields[position].strip() if len(fields) > position else ""
     return ""
 
 
@@ -54,7 +65,7 @@ def _decision(line: dict, outcome: str, reason: str, loans: list[dict] = ()) -> 
             "loan_ref": refs[0] if outcome == "post" else "", "reason": reason, "candidates": refs}
 
 
-def decide(lines: list[dict], schedules: list[dict]) -> list[dict]:
+def decide(lines: list[dict], schedules: list[dict], bank: str = "synthetic") -> list[dict]:
     by_account = {loan["account_no"]: loan for loan in schedules}
 
     def due_near(loan: dict, paise: int, day: date) -> str:
@@ -86,7 +97,7 @@ def decide(lines: list[dict], schedules: list[dict]) -> list[dict]:
                                                     f"amount due within {WINDOW_DAYS} days", [loan]))
             continue
 
-        payer = payer_name(line["narration"])
+        payer = payer_name(line["narration"], bank)
         if not payer:
             out.append(_decision(line, "queue", "no payer name or loan account in the narration"))
             continue

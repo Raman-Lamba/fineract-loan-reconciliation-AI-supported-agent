@@ -24,8 +24,9 @@ def split(amount: str) -> tuple[Decimal, Decimal]:
 
 
 def channel(narration: str) -> str:
-    """UPI, NEFT, IMPS or NACH: the first field of every narration format, and a payment type's name."""
-    return re.split(r"[/-]", narration, maxsplit=1)[0].upper()
+    """UPI, NEFT, IMPS or NACH: the first of these words in the narration (a payment type's name), or ''."""
+    found = re.search(r"\b(UPI|NEFT|IMPS|NACH)\b", narration.upper())
+    return found.group(1) if found else ""
 
 
 def _recover(d: dict, loan_id: int, fc) -> tuple:

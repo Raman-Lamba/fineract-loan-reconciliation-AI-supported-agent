@@ -38,7 +38,9 @@ Needs: Docker Desktop (WSL 2 backend) running, Git for Windows, Python 3.11+.
 
 `-Reconcile` runs `statement.fetch_schedules`, `statement.generate`, `matcher.run`, `matcher.evaluate`,
 `posting.run`, `posting.verify`, `review.build` and `review.report` in that order (each is described below)
-and can be used without `-Seed` once the loans are loaded. It never runs `review.apply`: posting what a
+and can be used without `-Seed` once the loans are loaded. If `data\bank_export.csv` exists it imports that
+file instead of generating the synthetic statement ([Use your own bank statement](#use-your-own-bank-statement))
+and prints which source it used. It never runs `review.apply`: posting what a
 person decided is a separate step ([Review queue](#review-queue)).
 
 The script is safe to re-run after a reboot. On first run it clones the connector (pinned commit) into
@@ -76,6 +78,7 @@ python -m unittest discover -s tests                   # generator tests, no Fin
 ```powershell
 .venv\Scripts\python -m statement.fetch_schedules   # every loan's instalments -> data\schedules.json
 .venv\Scripts\python -m statement.generate          # -> data\bank_statement.csv, data\answer_key.csv
+.venv\Scripts\python -m statement.generate --hdfc   # the same, plus data\bank_export_hdfc.csv (HDFC layout, to test the import)
 ```
 
 The statement (`txn_id, date, amount, narration`) is the only thing the agent sees. The answer key says
@@ -84,6 +87,57 @@ or overpaid amounts, a payer who is not the borrower, two possible borrowers, un
 ignore it (a repeated txn_id). Its last column, `true_loan_ref`, is the loan whose borrower really paid;
 only the demo reviewer reads it. Cases and outcomes:
 [docs/superpowers/specs/2026-11-16-bank-statement-design.md](docs/superpowers/specs/2026-11-16-bank-statement-design.md).
+
+## Use your own bank statement
+
+1. In your bank's net banking, download the account statement as CSV.
+2. Save it as `data\bank_export.csv`. Leave it as the bank made it: the account details above the table and
+   the summary below it are skipped.
+3. Add a line `BANK=hdfc` to `.env` (the layout of the export; `hdfc` is the default and the only one so far).
+4. Run `.\start.ps1 -Reconcile`. It prints `Statement source: data\bank_export.csv`, then imports, matches,
+   posts the clear lines, verifies the ledger and writes the review queue and partner report. There is no
+   accuracy report: a real statement has no answer key. To go back to the synthetic statement, delete or
+   rename `data\bank_export.csv`.
+
+The same by hand:
+
+```powershell
+.venv\Scripts\python -m statement.import_bank data\bank_export.csv --bank hdfc   # -> data\bank_statement.csv
+.venv\Scripts\python -m matcher.run --bank hdfc                                  # the same bank, or no name is read
+```
+
+The import keeps credits only and prints `rows read`, `credits kept` and `debits skipped`. Columns are found
+by their header names, in any order. `txn_id` is the `Chq./Ref.No.` cell without its leading zeros; if that
+cell is empty or all zeros, it is the one number of 12 or more digits in the narration. Dates (dd/mm/yy)
+become `2026-09-05`, amounts (`1,21,940.65`) become `121940.65`.
+
+**It stops instead of guessing.** A credit with no usable reference, or an amount or date it cannot read,
+ends the import with `REFUSED, nothing written` and the row number as Excel shows it. Nothing is written,
+so no money line is dropped quietly. Fix or remove that row in the export and run it again. A cash deposit
+with no reference number is such a row: record it by hand in Fineract.
+
+**What is verified and what is not**
+
+| Part | State |
+|---|---|
+| Synthetic narrations (`UPI/..`, `NEFT-..`, `IMPS/P2A/..`, `NACH/..`) | measured against the answer key |
+| HDFC export columns, dates, amounts; HDFC narrations (`UPI-NAME-..`, `NEFT CR-IFSC-NAME-..`, `IMPS-ref-NAME-..`) | built from secondary sources and tested only on a synthetic HDFC-layout file we generate. **No real HDFC export has been through it.** |
+| ICICI narrations (`UPI/ref/../NAME`, `INF/NEFT/UTR/../NAME`, `MMT/IMPS/ref/../NAME`), SBI narrations (`NEFT-CR-..`, `IMPS-..`) | from secondary sources, the name position partly assumed; unit tests on made-up lines only. There is no ICICI or SBI column layout yet, so `import_bank` accepts only `--bank hdfc`. |
+
+Before trusting it with a real book: run a real export through `import_bank`, read the first queue it
+produces, and correct the bank's line in `FORMATS` (`matcher/match.py`, narration layouts) or `LAYOUTS`
+(`statement/import_bank.py`, column names). Adding a bank is one line in each. A wrong name position cannot
+post on its own: a post still needs the exact instalment amount, a date within 5 days and one borrower who
+fits. Design: [docs/superpowers/specs/2026-11-16-bank-import-design.md](docs/superpowers/specs/2026-11-16-bank-import-design.md).
+
+**Tested through the import path** (16 Nov 2026). `statement.generate --hdfc` also writes the synthetic
+statement as an HDFC-layout export, `data\bank_export_hdfc.csv`: account details on top, 41 bank-charge debits
+among the credits, zero-padded references (80 UPI rows have none in the column), 372 narrations with a comma,
+a summary at the bottom. `data\bank_statement.csv` and `data\answer_key.csv` come out byte for byte as before
+(same sha256 with and without `--hdfc`). Importing the export printed `rows read: 1695 credits kept: 1654
+debits skipped: 41` and gave the same txn_id, date and amount on all 1,654 lines. `matcher.run --bank hdfc`
+on it made the same decision on every line as on the synthetic statement: 1,348 posts, 0 wrong, 100.0%
+auto-posted, 0 duplicates posted. `posting.run` then posted nothing (all 1,348 already in the ledger).
 
 ## Matcher
 
@@ -94,7 +148,8 @@ only the demo reviewer reads it. Cases and outcomes:
 
 Fixed rules, no language model: a repeated txn_id is ignored; a loan account in the narration names the
 loan; otherwise the payer's name and the exact amount must fit one loan with an instalment due within 5
-days. Two loans that fit, a look-alike borrower (same surname and first initial) owing the same amount, a
+days. Where the name sits in a narration comes from a small table, one entry per format and one line per
+bank (`FORMATS` in `matcher/match.py`; `--bank` picks the line, the synthetic layout by default). Two loans that fit, a look-alike borrower (same surname and first initial) owing the same amount, a
 different amount, or no fit all go to the queue with the candidates and a reason. Rules:
 [docs/superpowers/specs/2026-11-16-matcher-design.md](docs/superpowers/specs/2026-11-16-matcher-design.md).
 

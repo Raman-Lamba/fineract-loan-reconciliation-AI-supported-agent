@@ -1,6 +1,6 @@
 # One command to (re)start everything:   .\start.ps1
 # Safe to re-run. Add -Seed to load the synthetic borrowers and loans as well.
-# Add -Reconcile to build the bank statement, run the matcher, print its accuracy report, post the clear payments, verify the ledger, and write the review queue and the partner report.
+# Add -Reconcile to build the bank statement (imported from data\bank_export.csv if that file exists, synthetic otherwise), run the matcher, print its accuracy report, post the clear payments, verify the ledger, and write the review queue and the partner report.
 param([switch]$Seed, [switch]$Reconcile)
 
 $root = $PSScriptRoot
@@ -54,8 +54,19 @@ Push-Location $root
 & $py scripts\check_connection.py
 if ($Seed -and $LASTEXITCODE -eq 0) { & $py -m seed.load_fineract }
 if ($Reconcile) {
-    foreach ($step in 'statement.fetch_schedules', 'statement.generate', 'matcher.run', 'matcher.evaluate', 'posting.run', 'posting.verify', 'review.build', 'review.report') {
-        if ($LASTEXITCODE -eq 0) { & $py -m $step }
+    if (Test-Path 'data\bank_export.csv') {
+        # Your own bank export. BANK= in .env names its layout (default hdfc). No answer key, so no accuracy report.
+        $bank = 'hdfc'
+        $line = Select-String -Path $envFile -Pattern '^BANK=(\S+)'
+        if ($line) { $bank = $line.Matches[0].Groups[1].Value.ToLower() }
+        Write-Host "Statement source: data\bank_export.csv (your bank export, $bank layout)"
+        $steps = 'statement.fetch_schedules', "statement.import_bank data\bank_export.csv --bank $bank", "matcher.run --bank $bank", 'posting.run', 'posting.verify', 'review.build', 'review.report'
+    } else {
+        Write-Host 'Statement source: synthetic (statement.generate). To use your own, save the bank export as data\bank_export.csv'
+        $steps = 'statement.fetch_schedules', 'statement.generate', 'matcher.run', 'matcher.evaluate', 'posting.run', 'posting.verify', 'review.build', 'review.report'
+    }
+    foreach ($step in $steps) {
+        if ($LASTEXITCODE -eq 0) { & $py -m ($step -split ' ') }
     }
 }
 Pop-Location
