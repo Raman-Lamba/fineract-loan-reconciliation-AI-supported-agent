@@ -4,8 +4,17 @@ An AI agent that matches incoming bank payments to loans in Apache Fineract, pos
 and splits each one between the lender and its partner bank. See [spec.md](spec.md) for the problem.
 All data is synthetic. This is a portfolio project, not a production or regulator-approved system.
 
-**Status: milestone 1 (environment and seed data). Nothing below has run against a live Fineract yet:
-Docker and WSL were not installed on the development machine when this was written.**
+**Status: milestone 2 (synthetic bank statement with an answer key).** Milestone 1 ran against a live
+Fineract on 16 Nov 2026: 200 clients and 249 of 250 loans loaded. Loan L0202 is missing because an early
+trial run activated its borrower too late; a wipe and reseed (below) would load all 250.
+
+| Milestone | What | State |
+|---|---|---|
+| 1 | Sandbox, synthetic borrowers and loans | done |
+| 2 | Bank statement + answer key from Fineract's schedules | built |
+| 3 | Matcher: post, queue or ignore each line, with a reason | next |
+| 4 | Post repayments (UTR as `externalId`), 80:20 split ledger | |
+| 5 | Review queue, audit log, accuracy report against the targets | |
 
 ## Terms
 
@@ -51,6 +60,19 @@ Fineract's `externalId` and is looked up before it is created, so a re-run adds 
 .venv\Scripts\python -m seed.load_fineract --limit 5   # quick trial
 python -m unittest discover -s tests                   # generator tests, no Fineract needed
 ```
+
+## Bank statement
+
+```powershell
+.venv\Scripts\python -m statement.fetch_schedules   # every loan's instalments -> data\schedules.json
+.venv\Scripts\python -m statement.generate          # -> data\bank_statement.csv, data\answer_key.csv
+```
+
+The statement (`txn_id, date, amount, narration`) is the only thing the agent sees. The answer key says
+what a careful person would do with each line: post it to a named loan, queue it for a person (partial
+or overpaid amounts, a payer who is not the borrower, two possible borrowers, unknown credits), or
+ignore it (a repeated txn_id). Cases and outcomes:
+[docs/superpowers/specs/2026-11-16-bank-statement-design.md](docs/superpowers/specs/2026-11-16-bank-statement-design.md).
 
 ## Findings that shape the design
 
