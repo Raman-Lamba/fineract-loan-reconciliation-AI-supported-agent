@@ -6,10 +6,9 @@ All data is synthetic. This is a portfolio project, not a production or regulato
 
 **Status: milestone 5, all five built (clear payments are posted to Fineract and split 80:20 in a ledger;
 unclear ones wait in a queue a person works in Excel; the partner bank gets a report checked against the
-ledger).** Milestone 1 ran against a live
-Fineract on 16 Nov 2026: 200 clients and 259 of 260 loans loaded (L0251-L0260 are same-name twins). Loan
-L0202 is missing because an early trial run activated its borrower too late; a wipe and reseed (below)
-would load all 260.
+ledger).** On 16 Nov 2026 a wipe and one `.\start.ps1 -Seed -Reconcile` rebuilt everything in 15
+minutes: 200 clients, all 260 loans (L0251-L0260 are same-name twins), 1,348 lines auto-posted with 0
+wrong, 273 queued for a person, ledger and partner report equal to Fineract.
 
 | Milestone | What | State |
 |---|---|---|
@@ -253,7 +252,7 @@ the extra (refund it or hold it) is a decision this project leaves to a person.
 
 ## Run the whole thing
 
-From an empty machine to a reconciled book, in order. The first command does steps 1 to 9 of the list below.
+From an empty machine to a reconciled book, in order. The first command does steps 1 to 9 of the list below (about 15 minutes from a wiped sandbox).
 
 ```powershell
 .\start.ps1 -Seed -Reconcile
