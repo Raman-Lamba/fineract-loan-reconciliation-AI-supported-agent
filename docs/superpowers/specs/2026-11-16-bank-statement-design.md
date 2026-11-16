@@ -7,7 +7,8 @@ Goal (from spec.md): an agent matches bank payments to loans in Fineract, posts 
 
 - `schedules.json`: every loan's instalments as Fineract computed them (fetched once).
 - `bank_statement.csv`: `txn_id, date, amount, narration`. The only file the agent may read.
-- `answer_key.csv`: `txn_id, date, case, expected_outcome, expected_loan_ref`. Only the accuracy report reads it.
+- `answer_key.csv`: `txn_id, date, case, expected_outcome, expected_loan_ref, true_loan_ref`. Only the accuracy report
+  and the demo reviewer (milestone 5) read it.
 
 ## Steps
 

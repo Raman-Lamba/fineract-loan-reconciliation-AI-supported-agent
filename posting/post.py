@@ -37,8 +37,11 @@ def _recover(d: dict, loan_id: int, fc) -> tuple:
     return "recovered", f"{d['reason']}; already in Fineract from an earlier run", txn["id"]
 
 
-def process(d: dict, narration: str, loan_id: int, fc, payment_types: dict) -> tuple:
-    """One `post` decision -> (action, reason, Fineract transaction id or None)."""
+def process(d: dict, narration: str, loan_id: int, fc, payment_types: dict, manual: bool = False) -> tuple:
+    """One `post` decision -> (action, reason, Fineract transaction id or None).
+
+    `manual`: a person approved this line for this loan, so the amount need not fit an instalment.
+    """
     loan = fc.execute_get(f"loans/{loan_id}", {"associations": "repaymentSchedule,transactions"})
     if "error" in loan:
         return "failed", loan["error"], None
@@ -47,15 +50,16 @@ def process(d: dict, narration: str, loan_id: int, fc, payment_types: dict) -> t
     if any(t.get("externalId") == d["txn_id"] for t in loan["transactions"]):
         return _recover(d, loan_id, fc)
 
-    amount, day = Decimal(d["amount"]), date.fromisoformat(d["date"])
-    # The same instalment the matcher chose from its snapshot, read live.
-    inst = next((p for p in loan["repaymentSchedule"]["periods"]
-                 if p.get("period") and Decimal(str(p["totalDueForPeriod"])) == amount
-                 and abs((date(*p["dueDate"]) - day).days) <= WINDOW_DAYS), None)
-    if inst is None:
-        return "queued", "the matched instalment is no longer on the loan", None
-    if inst["complete"] or not loan["status"]["active"]:
-        return "queued", f"instalment already paid (due {date(*inst['dueDate']).isoformat()})", None
+    if not manual:
+        amount, day = Decimal(d["amount"]), date.fromisoformat(d["date"])
+        # The same instalment the matcher chose from its snapshot, read live.
+        inst = next((p for p in loan["repaymentSchedule"]["periods"]
+                     if p.get("period") and Decimal(str(p["totalDueForPeriod"])) == amount
+                     and abs((date(*p["dueDate"]) - day).days) <= WINDOW_DAYS), None)
+        if inst is None:
+            return "queued", "the matched instalment is no longer on the loan", None
+        if inst["complete"] or not loan["status"]["active"]:
+            return "queued", f"instalment already paid (due {date(*inst['dueDate']).isoformat()})", None
 
     body = {"transactionDate": d["date"], "transactionAmount": d["amount"], "externalId": d["txn_id"],
             "receiptNumber": d["txn_id"], "note": d["reason"], **FMT}
@@ -72,13 +76,22 @@ def process(d: dict, narration: str, loan_id: int, fc, payment_types: dict) -> t
     return "failed", posted["error"], None
 
 
-def post_all(decisions, narrations: dict, loan_ids: dict, fc, payment_types: dict, ledger_ids: set):
-    """Yields (audit row, ledger row or None) for each attempt. A txn_id already in the ledger is skipped."""
+def handled(ledger: list[dict], audit: list[dict]) -> set:
+    """txn_ids an automatic run leaves alone: in the ledger, or already queued for a person."""
+    return {row["txn_id"] for row in ledger} | {row["txn_id"] for row in audit if row["action"] == "queued"}
+
+
+def post_all(decisions, narrations: dict, loan_ids: dict, fc, payment_types: dict, skip: set,
+             approver: str = APPROVER):
+    """Yields (audit row, ledger row or None) for each attempt. A txn_id in `skip` is not touched.
+
+    `approver` is the person who decided the line in the review queue; left out, the matcher's rules did.
+    """
     for d in decisions:
-        if d["outcome"] != "post" or d["txn_id"] in ledger_ids:
+        if d["outcome"] != "post" or d["txn_id"] in skip:
             continue
         action, reason, fineract_txn_id = process(d, narrations[d["txn_id"]], loan_ids[d["loan_ref"]], fc,
-                                                  payment_types)
+                                                  payment_types, manual=approver != APPROVER)
         ledger = None
         if fineract_txn_id is not None:
             partner, lender = split(d["amount"])
@@ -86,4 +99,4 @@ def post_all(decisions, narrations: dict, loan_ids: dict, fc, payment_types: dic
                       "fineract_txn_id": fineract_txn_id, "amount": d["amount"],
                       "partner_share": str(partner), "lender_share": str(lender)}
         yield {"txn_id": d["txn_id"], "action": action, "loan_ref": d["loan_ref"], "reason": reason,
-               "approver": APPROVER if ledger else ""}, ledger
+               "approver": approver if ledger else ""}, ledger

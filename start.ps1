@@ -1,6 +1,6 @@
 # One command to (re)start everything:   .\start.ps1
 # Safe to re-run. Add -Seed to load the synthetic borrowers and loans as well.
-# Add -Reconcile to build the bank statement, run the matcher, print its accuracy report, post the clear payments and verify the ledger.
+# Add -Reconcile to build the bank statement, run the matcher, print its accuracy report, post the clear payments, verify the ledger, and write the review queue and the partner report.
 param([switch]$Seed, [switch]$Reconcile)
 
 $root = $PSScriptRoot
@@ -54,7 +54,7 @@ Push-Location $root
 & $py scripts\check_connection.py
 if ($Seed -and $LASTEXITCODE -eq 0) { & $py -m seed.load_fineract }
 if ($Reconcile) {
-    foreach ($step in 'statement.fetch_schedules', 'statement.generate', 'matcher.run', 'matcher.evaluate', 'posting.run', 'posting.verify') {
+    foreach ($step in 'statement.fetch_schedules', 'statement.generate', 'matcher.run', 'matcher.evaluate', 'posting.run', 'posting.verify', 'review.build', 'review.report') {
         if ($LASTEXITCODE -eq 0) { & $py -m $step }
     }
 }

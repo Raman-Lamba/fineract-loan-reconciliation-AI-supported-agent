@@ -4,6 +4,8 @@ Run:  python -m statement.generate     (reads data/schedules.json, writes data/*
 
 The statement is all the agent may see. The answer key says, per line, what a careful person would do:
 post (to expected_loan_ref), queue (a person decides), ignore (duplicate), or none (missed: no line).
+true_loan_ref is the loan whose borrower really paid, whatever the outcome: only the demo reviewer
+(review.simulate) reads it.
 """
 from __future__ import annotations
 
@@ -92,7 +94,7 @@ def generate(schedules: list[dict], seed: int = 20261116) -> tuple[list[dict], l
             amount, day, txn = inst["amount"], due, new_txn()
             if case == "missed":
                 key.append({"txn_id": "", "date": due.isoformat(), "case": case, "expected_outcome": "none",
-                            "expected_loan_ref": loan["loan_ref"]})
+                            "expected_loan_ref": loan["loan_ref"], "true_loan_ref": ""})
                 continue
             name = f"{first} {last}".upper()
             if case == "messy_name":
@@ -116,11 +118,12 @@ def generate(schedules: list[dict], seed: int = 20261116) -> tuple[list[dict], l
             outcome_case = "clean" if case == "duplicate" else case  # the first copy of a duplicate is real
             key.append({"txn_id": txn, "date": row["date"], "case": outcome_case,
                         "expected_outcome": OUTCOME[outcome_case],
-                        "expected_loan_ref": loan["loan_ref"] if OUTCOME[outcome_case] == "post" else ""})
+                        "expected_loan_ref": loan["loan_ref"] if OUTCOME[outcome_case] == "post" else "",
+                        "true_loan_ref": loan["loan_ref"]})
             if case == "duplicate":
                 lines.append(dict(row))  # the bank feed repeats the line: same txn_id
                 key.append({"txn_id": txn, "date": row["date"], "case": "duplicate", "expected_outcome": "ignore",
-                            "expected_loan_ref": ""})
+                            "expected_loan_ref": "", "true_loan_ref": loan["loan_ref"]})
 
     for _ in range(max(1, round(n_instalments * UNRELATED_SHARE))):
         txn = new_txn()
@@ -129,7 +132,7 @@ def generate(schedules: list[dict], seed: int = 20261116) -> tuple[list[dict], l
                "narration": f"NEFT-{txn}-{rng.choice(STRANGERS)}"}
         lines.append(row)
         key.append({"txn_id": txn, "date": row["date"], "case": "unrelated", "expected_outcome": "queue",
-                    "expected_loan_ref": ""})
+                    "expected_loan_ref": "", "true_loan_ref": ""})
 
     lines.sort(key=lambda r: (r["date"], r["txn_id"]))
     key.sort(key=lambda r: (r["date"], r["txn_id"], r["case"]))

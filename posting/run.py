@@ -3,7 +3,8 @@
 Run:  python -m posting.run [--limit N]
 Reads data/decisions.csv, bank_statement.csv and schedules.json; appends to data/ledger.csv and audit.csv.
 
-Safe to re-run: a txn_id in the ledger is skipped, and Fineract refuses a second use of an externalId.
+Safe to re-run: a txn_id in the ledger, or already queued for a person, is skipped, and Fineract refuses a
+second use of an externalId.
 """
 import argparse
 import csv
@@ -11,7 +12,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from posting.post import post_all
+from posting.post import handled, post_all
 from seed.connector import fineract_client as fc, ok
 
 DATA = Path(__file__).resolve().parents[1] / "data"
@@ -27,7 +28,7 @@ def read(name: str) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def _appender(name: str, fields: list[str]):
+def appender(name: str, fields: list[str]):
     path = DATA / name
     new = not path.exists()
     f = path.open("a", newline="")
@@ -51,11 +52,11 @@ def main():
     narrations = {line["txn_id"]: line["narration"] for line in read("bank_statement.csv")}
     loan_ids = {loan["loan_ref"]: loan["loan_id"] for loan in json.loads((DATA / "schedules.json").read_text())}
     payment_types = {p["name"]: p["id"] for p in ok(fc.execute_get("paymenttypes"), "Read payment types")}
-    ledger_ids = {row["txn_id"] for row in read("ledger.csv")}
+    skip = handled(read("ledger.csv"), read("audit.csv"))
 
-    to_ledger, to_audit = _appender("ledger.csv", LEDGER), _appender("audit.csv", AUDIT)
+    to_ledger, to_audit = appender("ledger.csv", LEDGER), appender("audit.csv", AUDIT)
     counts = dict.fromkeys(("posted", "recovered", "queued", "failed"), 0)
-    for audit, ledger in post_all(decisions, narrations, loan_ids, fc, payment_types, ledger_ids):
+    for audit, ledger in post_all(decisions, narrations, loan_ids, fc, payment_types, skip):
         if ledger:
             to_ledger(ledger)
         to_audit({"at": datetime.now().isoformat(timespec="seconds"), **audit})
@@ -65,7 +66,7 @@ def main():
         if sum(counts.values()) % 100 == 0:
             print(f"attempted: {sum(counts.values())}")
     skipped = len(decisions) - sum(counts.values())
-    print(f"post decisions: {len(decisions)} posted={counts['posted']} skipped (in ledger)={skipped} "
+    print(f"post decisions: {len(decisions)} posted={counts['posted']} skipped (in ledger or queued earlier)={skipped} "
           f"already paid (queued)={counts['queued']} recovered={counts['recovered']} failed={counts['failed']}")
 
 
