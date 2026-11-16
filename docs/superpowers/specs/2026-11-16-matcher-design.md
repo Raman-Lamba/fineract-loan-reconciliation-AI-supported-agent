@@ -25,6 +25,9 @@ sees in the queue), but it never turns a queue into a post on its own.
    with an instalment of exactly this amount due within 5 days of the line date, whose borrower's name
    fits the payer name: surname equal or a prefix of it (truncated), first name equal, a prefix of 3+
    letters, or its initial; either order; a single run-together token also fits.
+   - exactly one candidate, but another loan whose borrower has the same surname and first initial has
+     the same amount due in the window -> queue with both (added while building: the answer key calls
+     this ambiguous even when the line carries a full first name)
    - exactly one candidate -> post
    - more than one -> queue ("N loans fit")
    - none, but the name fits a loan whose instalment differs -> queue ("amount differs: partial or overpaid")

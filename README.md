@@ -4,7 +4,7 @@ An AI agent that matches incoming bank payments to loans in Apache Fineract, pos
 and splits each one between the lender and its partner bank. See [spec.md](spec.md) for the problem.
 All data is synthetic. This is a portfolio project, not a production or regulator-approved system.
 
-**Status: milestone 2 (synthetic bank statement with an answer key).** Milestone 1 ran against a live
+**Status: milestone 3 (matcher with an accuracy report; nothing is posted yet).** Milestone 1 ran against a live
 Fineract on 16 Nov 2026: 200 clients and 249 of 250 loans loaded. Loan L0202 is missing because an early
 trial run activated its borrower too late; a wipe and reseed (below) would load all 250.
 
@@ -12,8 +12,8 @@ trial run activated its borrower too late; a wipe and reseed (below) would load 
 |---|---|---|
 | 1 | Sandbox, synthetic borrowers and loans | done |
 | 2 | Bank statement + answer key from Fineract's schedules | built |
-| 3 | Matcher: post, queue or ignore each line, with a reason | next |
-| 4 | Post repayments (UTR as `externalId`), 80:20 split ledger | |
+| 3 | Matcher: post, queue or ignore each line, with a reason | built |
+| 4 | Post repayments (UTR as `externalId`), 80:20 split ledger | next |
 | 5 | Review queue, audit log, accuracy report against the targets | |
 
 ## Terms
@@ -31,7 +31,11 @@ Needs: Docker Desktop (WSL 2 backend) running, Git for Windows, Python 3.11+.
 ```powershell
 .\start.ps1          # start Fineract, confirm the login, list one client and one loan
 .\start.ps1 -Seed    # the same, then load the synthetic borrowers and loans
+.\start.ps1 -Seed -Reconcile   # everything: also build the statement, run the matcher, print its accuracy
 ```
+
+`-Reconcile` runs `statement.fetch_schedules`, `statement.generate`, `matcher.run` and `matcher.evaluate`
+in that order (each is described below) and can be used without `-Seed` once the loans are loaded.
 
 The script is safe to re-run after a reboot. On first run it clones the connector (pinned commit) into
 `vendor/`, generates the sandbox secrets, starts the sandbox, writes `.env`, and creates `.venv`.
@@ -51,7 +55,9 @@ profile (a further 9.4 GB image, 5.2 GB of models, up to 6 GB of memory).
 ## Seed data
 
 `seed/generate.py` builds 200 borrowers and 250 loans from a fixed random seed, so every run gives the
-same data. Names come from a small pool, so several borrowers share a full name on purpose.
+same data. Names come from a small pool, so several borrowers share a full name on purpose. Ten more
+"twin" loans (L0251-L0260) copy the principal, term and disbursal date of a loan held by another borrower
+with the same surname and first initial, so two look-alike borrowers owe the same amount on the same day.
 `seed/load_fineract.py` loads them: INR currency, five payment types (UPI, NEFT, IMPS, NACH, CASH), one
 loan product, then clients and back-dated loans. Each record carries our reference (`B0001`, `L0001`) as
 Fineract's `externalId` and is looked up before it is created, so a re-run adds nothing twice.
@@ -73,6 +79,32 @@ what a careful person would do with each line: post it to a named loan, queue it
 or overpaid amounts, a payer who is not the borrower, two possible borrowers, unknown credits), or
 ignore it (a repeated txn_id). Cases and outcomes:
 [docs/superpowers/specs/2026-11-16-bank-statement-design.md](docs/superpowers/specs/2026-11-16-bank-statement-design.md).
+
+## Matcher
+
+```powershell
+.venv\Scripts\python -m matcher.run        # statement + schedules -> data\decisions.csv (never reads the answer key)
+.venv\Scripts\python -m matcher.evaluate   # decisions against the answer key, with the targets
+```
+
+Fixed rules, no language model: a repeated txn_id is ignored; a loan account in the narration names the
+loan; otherwise the payer's name and the exact amount must fit one loan with an instalment due within 5
+days. Two loans that fit, a look-alike borrower (same surname and first initial) owing the same amount, a
+different amount, or no fit all go to the queue with the candidates and a reason. Rules:
+[docs/superpowers/specs/2026-11-16-matcher-design.md](docs/superpowers/specs/2026-11-16-matcher-design.md).
+
+Measured on 16 Nov 2026 (259 loans, 1,644 statement lines, 1,341 posts):
+
+| Measure | Result | Target |
+|---|---|---|
+| Wrong auto-postings | 0 of 1,341 posts (0.00%) | under 0.5% |
+| Auto-posted share | 1,341 of 1,341 lines the key says to post (100.0%) | at least 80% |
+| Duplicates posted | 0 | 0 |
+
+All 271 queued lines are ones the key also queues (86 ambiguous, 68 partial, 53 overpaid, 48 paid by
+another person, 16 unrelated). The statement is synthetic and its name mangling follows a few fixed
+patterns that the rules were written for, so these numbers say the rules are sound on this data, not how
+they would do on a real bank feed.
 
 ## Findings that shape the design
 

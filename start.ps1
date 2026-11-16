@@ -1,6 +1,7 @@
 # One command to (re)start everything:   .\start.ps1
 # Safe to re-run. Add -Seed to load the synthetic borrowers and loans as well.
-param([switch]$Seed)
+# Add -Reconcile to build the bank statement, run the matcher and print its accuracy report.
+param([switch]$Seed, [switch]$Reconcile)
 
 $root = $PSScriptRoot
 $repo = Join-Path $root 'vendor\mcp-mifosx'
@@ -52,4 +53,9 @@ if (-not (Test-Path $py)) {
 Push-Location $root
 & $py scripts\check_connection.py
 if ($Seed -and $LASTEXITCODE -eq 0) { & $py -m seed.load_fineract }
+if ($Reconcile) {
+    foreach ($step in 'statement.fetch_schedules', 'statement.generate', 'matcher.run', 'matcher.evaluate') {
+        if ($LASTEXITCODE -eq 0) { & $py -m $step }
+    }
+}
 Pop-Location

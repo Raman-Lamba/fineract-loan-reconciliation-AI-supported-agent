@@ -1,3 +1,5 @@
+import hashlib
+import json
 import sys
 import unittest
 from collections import Counter
@@ -14,7 +16,7 @@ class GenerateTest(unittest.TestCase):
 
     def test_counts(self):
         self.assertEqual(len(self.data["borrowers"]), 200)
-        self.assertEqual(len(self.data["loans"]), 250)
+        self.assertEqual(len(self.data["loans"]), 260)  # 250 drawn + 10 twins
 
     def test_deterministic(self):
         self.assertEqual(self.data, generate())
@@ -41,6 +43,42 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(loan["principal"] % 5_000, 0)
             self.assertIn(loan["months"], (6, 9, 12, 18, 24, 36))
             self.assertTrue(date(2026, 1, 5) <= date.fromisoformat(loan["disbursed_on"]) <= date(2026, 6, 30))
+
+    def test_original_loans_unchanged_by_twins(self):
+        # Pinned before twins were added: L0001-L0250 are already in Fineract and must not move.
+        blob = json.dumps([self.data["borrowers"], self.data["loans"][:250]], sort_keys=True).encode()
+        self.assertEqual(hashlib.sha256(blob).hexdigest(),
+                         "b62e254262d61faa75382a9f2c7c5d3894512b5d75fc61376b2bf972c8c199f2")
+        self.assertEqual(generate(n_twins=0)["loans"], self.data["loans"][:250])
+
+    def test_twins_copy_a_loan_of_a_lookalike_borrower(self):
+        people = {b["ref"]: b for b in self.data["borrowers"]}
+        originals, twins = self.data["loans"][:250], self.data["loans"][250:]
+        self.assertEqual([t["ref"] for t in twins], [f"L{i:04d}" for i in range(251, 261)])
+        terms = lambda loan: (loan["principal"], loan["months"], loan["disbursed_on"])  # noqa: E731
+        for twin in twins:
+            x = people[twin["borrower_ref"]]
+            sources = [o for o in originals if terms(o) == terms(twin) and o["borrower_ref"] != x["ref"]
+                       and people[o["borrower_ref"]]["lastname"] == x["lastname"]
+                       and people[o["borrower_ref"]]["firstname"][0] == x["firstname"][0]]
+            self.assertTrue(sources, twin["ref"])
+
+    def test_twins_cover_same_name_and_same_initial_pairs(self):
+        people = {b["ref"]: b for b in self.data["borrowers"]}
+        by_ref = {loan["ref"]: loan for loan in self.data["loans"]}
+        same = [people[t["borrower_ref"]]["firstname"] == people[by_ref[t["twin_of"]]["borrower_ref"]]["firstname"]
+                for t in self.data["loans"][250:]]
+        self.assertIn(True, same)
+        self.assertIn(False, same)
+
+    def test_twin_not_disbursed_before_its_borrower_was_activated(self):
+        # Fineract activated each client on the date of their earliest original loan.
+        activated = {}
+        for loan in self.data["loans"][:250]:
+            ref = loan["borrower_ref"]
+            activated[ref] = min(activated.get(ref, loan["disbursed_on"]), loan["disbursed_on"])
+        for twin in self.data["loans"][250:]:
+            self.assertGreaterEqual(twin["disbursed_on"], activated[twin["borrower_ref"]], twin["ref"])
 
     def test_fewer_loans_than_borrowers_rejected(self):
         with self.assertRaises(ValueError):
