@@ -119,16 +119,24 @@ def main():
     office_id = ok(fc.execute_get("offices"), "Read offices")[0]["id"]
     print(f"product={product_id} office={office_id} payment types={sorted(payment_types)}")
 
+    # Activation depends on the full data set, never on --limit: a trial must not activate a client
+    # later than a loan that a full run will add for them.
     first_loan = {}
-    for loan in loans:
+    for loan in data["loans"]:
         ref = loan["borrower_ref"]
         first_loan[ref] = min(first_loan.get(ref, loan["disbursed_on"]), loan["disbursed_on"])
     client_ids = {b["ref"]: ensure_client(b, office_id, fdate(first_loan[b["ref"]])) for b in borrowers}
     print(f"clients ready: {len(client_ids)}")
+    failed = []
     for n, loan in enumerate(loans, start=1):
-        ensure_loan(loan, client_ids[loan["borrower_ref"]], product_id)
+        try:
+            ensure_loan(loan, client_ids[loan["borrower_ref"]], product_id)
+        except SystemExit as e:  # ok() reports failures this way; keep going, list them at the end
+            failed.append((loan["ref"], str(e)))
         if n % 25 == 0 or n == len(loans):
             print(f"loans ready: {n}/{len(loans)}")
+    for ref, why in failed:
+        print(f"FAILED {ref}: {why}")
 
 
 if __name__ == "__main__":
