@@ -377,10 +377,7 @@ class ClientTest(unittest.TestCase):
 
     def test_a_stronger_model_gets_the_refusal_fallback(self):
         client.record_consent(self.data)
-        self.env.write_text(f"MIFOSX_PASSWORD=pw
-ANTHROPIC_API_KEY={KEY}
-AI_MODEL=claude-opus-5-5
-")
+        self.env.write_text(f"MIFOSX_PASSWORD=pw\nANTHROPIC_API_KEY={KEY}\nAI_MODEL=claude-opus-5-5\n")
         opener = Opener(model_says({"items": []}))
         client.sender(self.env, self.data, opener)(client.request("s", "p", {"type": "object"}))
         body = json.loads(opener.requests[0].data)
