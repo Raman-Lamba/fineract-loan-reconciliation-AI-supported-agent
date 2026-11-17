@@ -32,6 +32,7 @@ FORMATS = {
     "sbi": [("NEFT-CR-", "-", 3), ("IMPS-", "-", 2)],
     "other": [],  # a bank with no entry: names come only from the AI reader (ai.narration), if it is used
 }
+NO_REFERENCE = "NOREF-"  # the prefix statement.import_bank gives a credit that has no bank reference
 AI = " (read by the AI reader)"  # marks every reason that rests on a field the model read
 
 
@@ -74,6 +75,9 @@ def name_fits(payer: str, first: str, last: str) -> bool:
 
 def _decision(line: dict, outcome: str, reason: str, loans: list[dict] = ()) -> dict:
     refs = [loan["loan_ref"] for loan in loans]
+    if line["txn_id"].startswith(NO_REFERENCE) and outcome != "ignore":
+        # The bank reference is also the duplicate guard, so a line without one is never posted unseen.
+        outcome, reason = "queue", "no bank reference on this line (cash deposit or cheque?): a person must confirm"
     return {"txn_id": line["txn_id"], "date": line["date"], "amount": line["amount"], "outcome": outcome,
             "loan_ref": refs[0] if outcome == "post" else "", "reason": reason, "candidates": refs}
 

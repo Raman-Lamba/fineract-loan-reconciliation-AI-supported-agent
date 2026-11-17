@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from posting.post import handled, post_all  # noqa: E402
@@ -70,6 +71,19 @@ class BuildTest(unittest.TestCase):
         self.assertFalse(ids & {"2", "3", "5"})
 
 
+class NorefQueueTest(unittest.TestCase):
+    def test_the_queue_shows_the_line_and_the_excel_prefix_round_trips(self):
+        import tempfile
+        from review import build as queue_file
+        noref = "NOREF-2026-09-05-0a1b2c3d"
+        rows = build([decision(noref, candidates="")], [], set(), [line(noref)], SCHEDULES, [])
+        self.assertEqual(rows[0]["txn_id"], noref)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(queue_file, "QUEUE", Path(tmp) / "queue.csv"):
+                queue_file.write_queue(rows)
+                self.assertEqual(queue_file.read_queue()[0]["txn_id"], noref)
+
+
 class ApplyTest(unittest.TestCase):
     def apply(self, rows, fake=None, ledger_ids=(), rejected_ids=()):
         self.fake = fake or FakeFineract()
@@ -112,6 +126,20 @@ class ApplyTest(unittest.TestCase):
                                  "reason": "manual: his brother paid", "approver": "Asha"})
         self.assertEqual((ledger["loan_ref"], ledger["amount"], ledger["partner_share"], ledger["lender_share"]),
                          ("L1", "5000.00", "4000.00", "1000.00"))
+
+    def test_a_line_with_no_bank_reference_posts_once_under_its_synthetic_id(self):
+        noref = "NOREF-2026-09-05-0a1b2c3d"
+        row = queued(noref, "post", "L1", "Asha", "cheque 4411 from Ramesh")
+        (keep, audit, ledger), = self.apply([row])
+        self.assertEqual((self.fake.posts[0][1]["externalId"], keep, ledger["txn_id"]), (noref, None, noref))
+        self.assertIn("no bank reference", audit["reason"])
+        self.assertIn("cheque 4411", audit["reason"])
+        # The next apply finds it in the ledger, and so does Fineract's own guard if the ledger were lost.
+        self.assertEqual(self.apply([row], ledger_ids=[noref]), [(None, None, None)])
+        self.assertEqual(self.fake.posts, [])
+        earlier = {"id": 519, "externalId": noref, "amount": 8450.0, "manuallyReversed": False}
+        (_, audit, _), = self.apply([row], FakeFineract(transactions=[earlier]))
+        self.assertEqual((audit["action"], self.fake.posts), ("recovered", []))
 
     def test_the_amount_and_date_come_from_the_statement_not_the_edited_file(self):
         row = {**queued("1", "post", "L1", "Asha"), "amount": "8450", "date": "05-09-2026"}  # as Excel saves them

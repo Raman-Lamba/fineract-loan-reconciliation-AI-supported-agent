@@ -95,9 +95,23 @@ class ImportTest(unittest.TestCase):
         self.assertEqual([r["txn_id"] for r in lines], ["507296189749"] * 2)
 
     # Refusals: the row number counts every row of the file, header included, as Excel shows it.
-    def test_credit_without_a_reference_is_refused(self):
-        self.assertRefuses(3, "no usable reference", UPI, "06/09/26,CASH DEPOSIT,0000000000000000,06/09/26,,500.00,0")
-        self.assertRefuses(2, "no usable reference", "06/09/26,CASH DEPOSIT,,06/09/26,,500.00,0")
+    def test_credit_without_a_reference_is_kept_with_a_marked_stable_id(self):
+        cash = "06/09/26,CASH DEPOSIT,0000000000000000,06/09/26,,500.00,0"
+        lines, counts = run(UPI, cash, "06/09/26,CHQ DEPOSIT,,06/09/26,,700.00,0")
+        self.assertEqual(len(lines), 3)
+        self.assertRegex(lines[1]["txn_id"], r"^NOREF-2026-09-06-[0-9a-f]{8}$")
+        self.assertEqual(lines[1]["amount"], "500.00")
+        self.assertEqual((counts["credits"], counts["no_reference"]), (3, [3, 4]))
+        self.assertEqual(run(cash)[0][0]["txn_id"], lines[1]["txn_id"])  # a re-import gives the same id
+
+    def test_identical_rows_without_a_reference_stay_distinct_and_stable(self):
+        cash = "06/09/26,CASH DEPOSIT,,06/09/26,,500.00,0"
+        ids = [r["txn_id"] for r in run(cash, cash)[0]]
+        self.assertEqual(len(set(ids)), 2)
+        self.assertEqual(ids, [r["txn_id"] for r in run(cash, cash)[0]])
+
+    def test_the_count_is_absent_when_every_credit_has_a_reference(self):
+        self.assertNotIn("no_reference", run(UPI)[1])
 
     def test_credit_with_an_unreadable_amount_is_refused(self):
         for cell in ("8450.00 Cr", "8.450,00", '"84,50.00"', "-8450.00", "8450.001"):
@@ -114,8 +128,8 @@ class ImportTest(unittest.TestCase):
     def test_reference_falls_back_to_the_one_long_number_in_the_narration(self):
         lines, _ = run("05/09/26,UPI-RAMESH KUMAR-9876543210@ybl-UTIB0000001-007296189749-emi,0000000000000000,05/09/26,,8450.00,0")
         self.assertEqual(lines[0]["txn_id"], "7296189749")
-        self.assertRefuses(2, "no usable reference",
-                           "05/09/26,IMPS-507296189749-RAMESH KUMAR-123456789012-emi,,05/09/26,,8450.00,0")
+        lines, _ = run("05/09/26,IMPS-507296189749-RAMESH KUMAR-123456789012-emi,,05/09/26,,8450.00,0")
+        self.assertTrue(lines[0]["txn_id"].startswith("NOREF-"))  # two numbers: it does not guess which
 
     def test_two_references_that_differ_only_in_leading_zeros_are_refused(self):
         self.assertRefuses(3, "leading zeros", "05/09/26,UPI-A B-a@ybl,0077,05/09/26,,10.00,0",

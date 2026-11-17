@@ -35,7 +35,7 @@ refusal below.
    as `121940.65`. Anything else in either amount column: refuse.
 5. **Date.** `dd/mm/yy` (or `dd/mm/yyyy`) to ISO. A credit with any other date: refuse.
 6. **txn_id.** The `Chq./Ref.No.` cell. If it is empty or all zeros, the one number of 12 or more digits
-   in the narration (the UPI or IMPS reference); none or more than one: refuse. Leading zeros are padding
+   in the narration (the UPI or IMPS reference); none or more than one: the credit is kept with a synthetic id (below). Leading zeros are padding
    and are always removed, from either source, so a payment has the same txn_id wherever it was read.
    Two references in one file that differ only in leading zeros are refused, because the matcher would
    take the second for a duplicate and ignore it.
@@ -89,4 +89,9 @@ prints which source was used.
 - The narration fallback reads all-digit references only; a NEFT UTR has letters.
 - A cheque number is short and can repeat across payers; Fineract refuses the second at posting.
 - The export must be UTF-8 CSV (not XLS).
-- A credit with no reference at all (a cash deposit) stops the import until a person deals with that row.
+- A credit with no reference at all (a cash deposit) is not refused. It gets the id
+  `NOREF-<date>-<8 hex of sha256 of date, amount, narration and its position among identical rows>`: stable
+  on a re-import, distinct for identical rows. The import prints their count and row numbers (the page shows
+  the same notice). The matcher always queues a `NOREF-` line (never posts it, even if name and amount fit),
+  a person decides it in the review queue, and an approval posts with that id as the Fineract external id, so
+  the duplicate guard holds. The audit reason says no bank reference was used.

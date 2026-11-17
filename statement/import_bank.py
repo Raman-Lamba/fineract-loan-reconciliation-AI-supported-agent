@@ -4,7 +4,8 @@ Run:  python -m statement.import_bank <export.csv> [--bank hdfc] [--out data/ban
       (--bank icici, sbi or other: the column map confirmed for that file on the page's Statement tab)
 
 Writes `txn_id, date, amount, narration`, credits only, in the export's order. It never drops a money
-line quietly: a credit it cannot read stops the import with the row number, and nothing is written.
+line quietly: a credit whose amount or date it cannot read stops the import with the row number, and
+nothing is written. A credit with no bank reference is kept under a NOREF- id and goes to the review queue.
 Rules: docs/superpowers/specs/2026-11-16-bank-import-design.md.
 
 The HDFC layout comes from secondary sources and no real export was used: unverified.
@@ -21,7 +22,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from matcher.match import FORMATS
+from matcher.match import FORMATS, NO_REFERENCE
 
 # The export's column headers per bank, found by name (case and spaces ignored) wherever they are.
 # One line adds a bank.
@@ -101,12 +102,11 @@ def convert(export, bank: str = "hdfc", cmap: dict | None = None) -> tuple[list[
         debit_name = credit_name = name("amount")
         if style == "two_columns":
             debit_name, credit_name = name("debit"), name("credit")
-        ref_name, formats = name("reference"), (cmap["date_format"],)
+        formats = (cmap["date_format"],)
         expected = datetime(2026, 9, 5).strftime(cmap["date_format"])
     else:
-        debit_name, credit_name, ref_name, formats, expected = (layout["debit"], layout["credit"], layout["ref"],
-                                                                DATE_FORMATS, "dd/mm/yy")
-    at, ended, lines, raw_refs = None, False, [], {}
+        debit_name, credit_name, formats, expected = layout["debit"], layout["credit"], DATE_FORMATS, "dd/mm/yy"
+    at, ended, lines, raw_refs, seen = None, False, [], {}, {}
     counts = {"rows": 0, "credits": 0, "debits": 0, "empty": 0}
     # Row numbers count every row of the file from 1, as Excel shows them.
     for n, row in enumerate(csv.reader(export), 1):
@@ -166,9 +166,14 @@ def convert(export, bank: str = "hdfc", cmap: dict | None = None) -> tuple[list[
             raw = found.pop() if len(found) == 1 else ""
         txn_id = raw.lstrip("0")
         if not txn_id:
-            raise ValueError(f"row {n}: credit of {credit} has no usable reference: '{ref_name}' is "
-                             f"{ref!r} and the narration does not hold exactly one number of 12+ digits")
-        if raw_refs.setdefault(txn_id, raw) != raw:
+            # Kept, not refused: the matcher queues every NOREF line for a person, who decides it. The id is
+            # stable (same row, same id on a re-import) and the position keeps identical-looking rows apart.
+            same = (day, f"{money:.2f}", narration)
+            seen[same] = seen.get(same, 0) + 1
+            digest = hashlib.sha256("|".join((*same, str(seen[same]))).encode()).hexdigest()[:8]
+            txn_id = f"{NO_REFERENCE}{day}-{digest}"
+            counts.setdefault("no_reference", []).append(n)
+        elif raw_refs.setdefault(txn_id, raw) != raw:
             raise ValueError(f"row {n}: references {raw_refs[txn_id]!r} and {raw!r} differ only in leading "
                              f"zeros, so they cannot be told apart once the padding is removed")
         lines.append({"txn_id": txn_id, "date": day, "amount": f"{money:.2f}", "narration": narration})
@@ -230,6 +235,9 @@ def main():
     record(args.out, args.bank)
     print(f"rows read: {counts['rows']} credits kept: {counts['credits']} debits skipped: {counts['debits']}"
           + (f" rows with no amount skipped: {counts['empty']}" if counts["empty"] else ""))
+    if counts.get("no_reference"):
+        print(f"{len(counts['no_reference'])} credits had no bank reference; they will go to the review queue "
+              f"(rows {', '.join(map(str, counts['no_reference']))})")
     print(f"{args.bank} export {args.export} -> {args.out}")
 
 

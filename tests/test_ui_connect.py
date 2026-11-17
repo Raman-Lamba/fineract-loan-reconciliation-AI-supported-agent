@@ -206,6 +206,14 @@ class StatementTest(Page):
         self.assertFalse((self.data / "layouts.json").exists())
         self.assertEqual(len(files.read("bank_statement.csv")), 4)  # still the demo's statement
 
+    def test_a_credit_with_no_reference_is_imported_and_reported_not_refused(self):
+        text = (FIXTURES / "sbi_style.csv").read_text().replace("IMPS-612345678902-SUNIL VERMA-EMI", "CASH DEPOSIT")
+        self.upload("sbi.csv", text)
+        self.assertEqual(self.post("/api/preview", {"map": MAPS["sbi_style.csv"]})["counts"]["no_reference"], [10])
+        done = self.post("/api/import", {"map": MAPS["sbi_style.csv"], "bank": "sbi"})
+        self.assertEqual((done["done"]["credits"], done["done"]["no_reference"]), (4, [10]))
+        self.assertTrue(files.read("bank_statement.csv")[2]["txn_id"].startswith("NOREF-"))
+
     def test_the_upload_has_a_size_limit(self):
         with mock.patch.object(serve, "MAX_UPLOAD", 2000):
             status, text = self.request("POST", "/api/upload", raw=json.dumps({"text": "x," * 2000}))

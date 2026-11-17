@@ -52,6 +52,14 @@ class MatcherTest(unittest.TestCase):
         self.assertEqual((second["outcome"], second["loan_ref"]), ("ignore", ""))
 
     # Rule 2
+    def test_a_line_with_no_bank_reference_is_never_posted(self):
+        # Name, amount and date fit one loan exactly, and the account is in the narration: still a person's call.
+        for narration in ("UPI/1/ANITA NAIR/a@b/emi", "UPI/1/RAMESH KUMAR/r@okaxis/emi", "NEFT SCPL000000001"):
+            d = one(narration, txn="NOREF-2026-09-05-0a1b2c3d")
+            self.assertEqual((d["outcome"], d["loan_ref"]), ("queue", ""))
+            self.assertIn("no bank reference on this line", d["reason"])
+        self.assertEqual(one("SCPL000000001", txn="NOREF-2026-09-05-0a1b2c3d")["candidates"], ["L1"])
+
     def test_loan_reference_posts(self):
         self.assertPosts(one("NACH/ACH DR/SCPL000000002/SEP EMI/00000001", amount="3100.50"), "L2")
 

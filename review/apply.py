@@ -4,6 +4,7 @@ Run:  python -m review.apply     (reads data/queue.csv; posts to Fineract; appen
 
 Safe to re-run: an applied line leaves the queue, and a txn_id in the ledger is never posted again.
 """
+from matcher.match import NO_REFERENCE
 from posting.post import post_all
 
 PROBLEM = "PROBLEM: "
@@ -40,8 +41,10 @@ def apply(queue: list[dict], lines: dict, loan_ids: dict, fc, payment_types: dic
         elif ref not in loan_ids:
             problem = f"loan_ref '{ref}' is not a known loan"
         else:
+            # Our own stable id stands in for the bank's, so Fineract's duplicate guard still works.
+            why = f"manual (no bank reference, our id {txn} used): {note}" if txn.startswith(NO_REFERENCE) else f"manual: {note}"
             d = {"txn_id": txn, "date": lines[txn]["date"], "amount": lines[txn]["amount"], "outcome": "post",
-                 "loan_ref": ref, "reason": f"manual: {note}"}
+                 "loan_ref": ref, "reason": why}
             (audit, ledger), = post_all([d], {txn: lines[txn]["narration"]}, loan_ids, fc, payment_types, set(),
                                         approver)
             if not ledger:

@@ -275,10 +275,16 @@ by their header names, in any order. `txn_id` is the `Chq./Ref.No.` cell without
 cell is empty or all zeros, it is the one number of 12 or more digits in the narration. Dates (dd/mm/yy)
 become `2026-09-05`, amounts (`1,21,940.65`) become `121940.65`.
 
-**It stops instead of guessing.** A credit with no usable reference, or an amount or date it cannot read,
-ends the import with `REFUSED, nothing written` and the row number as Excel shows it. Nothing is written,
-so no money line is dropped quietly. Fix or remove that row in the export and run it again. A cash deposit
-with no reference number is such a row: record it by hand in Fineract.
+**It stops instead of guessing.** A credit whose amount or date it cannot read ends the import with
+`REFUSED, nothing written` and the row number as Excel shows it. Nothing is written, so no money line is
+dropped quietly. Fix or remove that row in the export and run it again.
+
+**A credit with no reference** (a cash deposit, a cheque with no number) does not stop the import. It is
+kept under a made-up id, `NOREF-2026-09-06-1a2b3c4d` (date and a hash of the row, so a re-import gives the
+same id and identical rows stay apart), and the import prints how many there were and their row numbers. The
+matcher never posts such a line, whatever else fits: it goes to the review queue, where a person decides it.
+If they approve it, it is posted with that id as Fineract's external id, so the duplicate guard still holds,
+and the audit log says no bank reference was used.
 
 **What is verified and what is not**
 

@@ -663,10 +663,12 @@ function renderMap(check) {
   if (check.problem) box.replaceChildren(el("div", {class: "problem"}, "This would not import: " + check.problem));
   else if (check.counts) box.replaceChildren(el("div", {class: "done"},
     `Reads every row: ${check.counts.rows} transactions, ${check.counts.credits} credits to import, ${check.counts.debits} debits skipped` +
-    (check.counts.empty ? `, ${check.counts.empty} rows with no amount skipped` : "") + "."));
+    (check.counts.empty ? `, ${check.counts.empty} rows with no amount skipped` : "") + "." + noRef(check.counts)));
   else box.replaceChildren();
   $("st-import").disabled = !check.counts;
 }
+
+const noRef = c => c.no_reference ? ` ${c.no_reference.length} credits have no reference and will be reviewed by a person (rows ${c.no_reference.join(", ")}).` : "";
 
 let previewing = 0;
 async function refresh() {
@@ -684,7 +686,7 @@ $("st-import").addEventListener("click", async () => {
     return void $("st-result").replaceChildren(el("span", {class: "problem"}, result.error || result.problem));
   const c = result.done;
   $("st-result").replaceChildren(el("span", {class: "done"},
-    `Imported ${c.credits} credits (${c.debits} debits skipped). Next: the Run tab.`));
+    `Imported ${c.credits} credits (${c.debits} debits skipped).${noRef(c)} Next: the Run tab.`));
   const s = await call("/api/settings");
   if (!s.error) showSettings(s);
   loadRun();
