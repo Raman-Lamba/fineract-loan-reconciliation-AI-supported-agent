@@ -5,102 +5,157 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reconciliation review</title>
 <style>
-  :root { --bg:#f5f6f8; --card:#fff; --ink:#1c2330; --soft:#5b6575; --line:#d9dee6; --accent:#1f5fbf;
-          --good:#17723b; --goodbg:#e4f4ea; --bad:#b3261e; --badbg:#fbe9e7; --warn:#8a5a00; --warnbg:#fff3d6; }
+  :root { color-scheme: light dark;
+          --bg:#f3f5f8; --card:#fff; --ink:#1c2330; --soft:#566173; --line:#d5dbe4; --accent:#1f5fbf; --accentbg:#e6eefb;
+          --good:#17723b; --goodbg:#e4f4ea; --bad:#b3261e; --badbg:#fbe9e7; --warn:#7a5000; --warnbg:#fff3d6;
+          --raise:#f7f9fb; --onaccent:#fff; --shadow:0 1px 2px rgba(20,30,50,.06);
+          --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --r:8px; --r2:12px; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#14181f; --card:#1d232d; --ink:#e7ebf1; --soft:#9aa5b5; --line:#313a48; --accent:#7fb0ff;
-            --good:#6fd596; --goodbg:#16311f; --bad:#ff9c93; --badbg:#3a1a17; --warn:#ffcf70; --warnbg:#3a2e12; }
+    :root { --bg:#14181f; --card:#1d232d; --ink:#e7ebf1; --soft:#9aa5b5; --line:#35404f; --accent:#7fb0ff; --accentbg:#1f2e47;
+            --good:#6fd596; --goodbg:#16311f; --bad:#ff9c93; --badbg:#3a1a17; --warn:#ffcf70; --warnbg:#3a2e12;
+            --raise:#232a36; --onaccent:#0f1722; --shadow:none; }
   }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, "Segoe UI", sans-serif; }
-  header { background:var(--card); border-bottom:1px solid var(--line); padding:10px 20px; display:flex;
-           flex-wrap:wrap; gap:12px 20px; align-items:center; position:sticky; top:0; z-index:2; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  header { background:var(--card); border-bottom:1px solid var(--line); padding:var(--s3) var(--s5); display:flex;
+           flex-wrap:wrap; gap:var(--s3) var(--s5); align-items:center; position:sticky; top:0; z-index:2; }
   h1 { font-size:17px; margin:0; }
-  h2 { font-size:16px; margin:26px 0 8px; }
-  main { max-width:1180px; margin:0 auto; padding:16px 20px 60px; }
-  a { color:var(--accent); }
+  h2 { font-size:16px; margin:28px 0 var(--s2); }
+  main { max-width:1180px; margin:0 auto; padding:var(--s4) var(--s5) 60px; }
+  a { color:var(--accent); text-underline-offset:2px; }
   code, .mono { font-family:Consolas, "Cascadia Mono", monospace; font-size:13px; }
   code { background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:0 4px; }
-  input[type=text] { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line);
-                     border-radius:6px; padding:6px 8px; }
-  button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink);
-           border-radius:6px; padding:6px 14px; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:wait; }
-  button.approve { background:var(--good); border-color:var(--good); color:var(--card); font-weight:600; }
-  button.reject { color:var(--bad); border-color:var(--bad); }
-  .tabs { display:flex; gap:4px; }
-  .tabs button { border:0; background:none; padding:6px 12px; border-bottom:3px solid transparent; border-radius:0; }
-  .tabs button.on { border-bottom-color:var(--accent); font-weight:600; }
-  .approver { margin-left:auto; display:flex; align-items:center; gap:8px; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  input[type=text], .form input, select { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line);
+                     border-radius:var(--r); padding:7px 10px; }
+  input[type=text]:hover, .form input:hover, select:hover { border-color:var(--soft); }
+  input[type=text]:focus-visible, .form input:focus-visible, select:focus-visible { outline-offset:0; border-color:var(--accent); }
+  .form input, select { font-weight:400; }
+
+  /* buttons: secondary (default), primary (.approve), destructive (.reject) */
+  button, a.btn { font:inherit; font-weight:500; border:1px solid var(--line); background:var(--card); color:var(--ink);
+           border-radius:var(--r); padding:7px 14px; cursor:pointer; text-decoration:none; display:inline-block;
+           line-height:1.35; transition:background-color .15s, border-color .15s, color .15s; }
+  button:hover:not(:disabled), a.btn:hover { background:var(--raise); border-color:var(--soft); }
+  button:active:not(:disabled) { background:var(--bg); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.approve { background:var(--good); border-color:var(--good); color:var(--onaccent); font-weight:600; }
+  button.approve:hover:not(:disabled) { background:var(--good); border-color:var(--ink); filter:brightness(1.08); }
+  button.reject { color:var(--bad); border-color:var(--bad); background:transparent; }
+  button.reject:hover:not(:disabled) { background:var(--badbg); border-color:var(--bad); }
+  button + span, button + button { margin-left:var(--s2); }
+  .act button + button { margin-left:0; }
+  input[type=file]::file-selector-button { font:inherit; font-weight:500; border:1px solid var(--line); background:var(--card); color:var(--ink);
+           border-radius:var(--r); padding:6px 12px; margin-right:var(--s3); cursor:pointer; }
+  input[type=file]::file-selector-button:hover { background:var(--raise); border-color:var(--soft); }
+  button.small, a.btn.small { padding:3px 10px; font-size:13px; }
+
+  /* tabs */
+  .tabs { display:flex; flex-wrap:wrap; gap:var(--s1); }
+  .tabs button { border:0; background:none; color:var(--soft); padding:7px 14px; border-radius:99px; font-weight:500;
+                 display:inline-flex; align-items:center; gap:7px; }
+  .tabs button:hover:not(:disabled) { background:var(--raise); color:var(--ink); border:0; }
+  .tabs .n { font-size:12px; font-weight:700; min-width:20px; height:20px; border-radius:99px; display:inline-grid;
+             place-items:center; background:var(--bg); border:1px solid var(--line); color:var(--soft); }
+  .tabs button.on, .tabs button.on:hover:not(:disabled) { background:var(--accentbg); color:var(--accent); font-weight:700;
+                    box-shadow:inset 0 -3px 0 var(--accent); border-radius:var(--r) var(--r) 0 0; }
+  .tabs button.on .n { background:var(--accent); border-color:var(--accent); color:var(--onaccent); }
+  .approver { margin-left:auto; display:flex; align-items:center; gap:var(--s2); font-weight:500; }
   .approver input.missing { border-color:var(--bad); background:var(--badbg); }
-  .demo { background:var(--warnbg); color:var(--warn); font-weight:700; padding:2px 10px; border-radius:99px; }
-  .strip { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
-  .tile, .row, .box { background:var(--card); border:1px solid var(--line); border-radius:10px; }
-  .tile { padding:10px 14px; }
-  .tile small { color:var(--soft); display:block; }
-  .tile b { font-size:19px; font-variant-numeric:tabular-nums; }
-  .row { padding:14px 16px; margin-top:12px; }
-  .row .top { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline; }
-  .row .amount { font-size:19px; font-weight:700; font-variant-numeric:tabular-nums; }
-  .row .narration { margin:4px 0; overflow-wrap:anywhere; }
+  .demo { background:var(--warnbg); color:var(--warn); font-weight:700; padding:3px 12px; border-radius:99px; font-size:13px; }
+
+  /* stat cards */
+  .strip { display:grid; grid-template-columns:repeat(auto-fill, minmax(235px, 1fr)); gap:var(--s3); }
+  .tile, .row, .box { background:var(--card); border:1px solid var(--line); border-radius:var(--r2); box-shadow:var(--shadow); }
+  .tile { padding:var(--s4); min-height:96px; display:flex; flex-direction:column; gap:var(--s1); min-width:0; align-items:flex-start; }
+  .tile small { color:var(--soft); font-size:12.5px; line-height:1.3; }
+  .tile > small:first-child { text-transform:uppercase; letter-spacing:.04em; font-weight:600; font-size:11.5px; }
+  .tile b, .tile .value { font-size:clamp(17px, 1.9vw, 22px); line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums;
+                          overflow-wrap:anywhere; max-width:100%; }
+  .tile b.soft { font-size:15px; font-weight:500; }
+  .tile button { margin-top:var(--s1); }
+  a.btn { color:var(--accent); }
+
+  /* review cards */
+  .row { padding:var(--s4) var(--s5); margin-top:var(--s3); }
+  .row .top { display:flex; flex-wrap:wrap; gap:var(--s1) var(--s4); align-items:baseline; }
+  .row .amount { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .row .narration { margin:var(--s2) 0; overflow-wrap:anywhere; }
   .soft { color:var(--soft); }
-  .reason { background:var(--warnbg); color:var(--warn); border-radius:6px; padding:3px 8px; display:inline-block; }
-  .problem { background:var(--badbg); color:var(--bad); border-radius:6px; padding:6px 10px; margin-top:8px; }
-  .done { background:var(--goodbg); color:var(--good); border-radius:6px; padding:6px 10px; margin-top:8px; }
-  .cands { display:flex; flex-wrap:wrap; gap:10px; margin:10px 0; }
-  .cand { border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-width:210px; flex:1 1 210px;
-          max-width:340px; display:block; cursor:pointer; }
-  .cand:has(input:checked) { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
-  .cand b { display:block; }
+  .reason { background:var(--warnbg); color:var(--warn); border-radius:99px; padding:3px 12px; display:inline-block; font-size:13.5px; font-weight:500; }
+  .problem { background:var(--badbg); color:var(--bad); border-radius:var(--r); padding:var(--s2) var(--s3); margin-top:var(--s2); border:1px solid color-mix(in srgb, var(--bad) 35%, transparent); }
+  .done { background:var(--goodbg); color:var(--good); border-radius:var(--r); padding:var(--s2) var(--s3); margin-top:var(--s2); border:1px solid color-mix(in srgb, var(--good) 35%, transparent); }
+  .cands { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:var(--s3); margin:var(--s3) 0; }
+  .cand { border:1px solid var(--line); background:var(--raise); border-radius:var(--r); padding:var(--s3); display:block;
+          cursor:pointer; min-width:0; overflow-wrap:anywhere; }
+  .cand:hover { border-color:var(--soft); }
+  .cand:has(input:checked) { border-color:var(--accent); background:var(--accentbg); box-shadow:0 0 0 1px var(--accent); }
+  .cand:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+  .cand b { display:block; margin-top:2px; }
   .sugg { cursor:default; }
-  .sugg.used { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
-  .sugg .facts { display:block; margin:2px 0 6px; }
-  .sugg .match { color:var(--good); font-weight:600; }
-  .sugg .why { display:block; background:var(--bg); border-radius:6px; padding:4px 8px; margin:6px 0; font-size:14px; }
+  .sugg:hover { border-color:var(--line); }
+  .sugg.used { border-color:var(--accent); background:var(--accentbg); box-shadow:0 0 0 1px var(--accent); }
+  .sugg .facts { display:block; margin:2px 0 var(--s2); }
+  .sugg .match { color:var(--good); font-weight:600; margin-left:6px; }
+  .sugg .why { display:block; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 8px; margin:6px 0; font-size:14px; }
   .sugg .why b { display:inline; color:var(--warn); }
-  .possible { margin-top:10px; }
-  .possible h3 { font-size:14px; margin:0; }
-  details.possible summary { cursor:pointer; color:var(--accent); }
-  .act { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .possible { margin-top:var(--s3); }
+  .possible h3 { font-size:14px; margin:0 0 2px; }
+  details.possible summary { cursor:pointer; color:var(--accent); font-weight:500; }
+  .act { display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
   .act input.note { flex:1 1 260px; }
-  .box { padding:14px 18px; margin-top:12px; }
+  .box { padding:var(--s4) var(--s5); margin-top:var(--s3); }
+  .box > :first-child { margin-top:0; } .box > :last-child { margin-bottom:0; }
+
+  /* empty state */
+  .empty { text-align:center; padding:48px var(--s5); display:flex; flex-direction:column; align-items:center; gap:var(--s3); }
+  .empty .ico { width:52px; height:52px; border-radius:50%; background:var(--goodbg); border:2px solid var(--good); position:relative; }
+  .empty .ico::after { content:""; position:absolute; left:17px; top:9px; width:11px; height:20px; border:solid var(--good);
+                       border-width:0 3px 3px 0; transform:rotate(40deg); }
+  .empty p { margin:0; max-width:46ch; color:var(--soft); }
+  .empty p.title { color:var(--ink); font-weight:600; font-size:16px; }
+
   table { border-collapse:collapse; width:100%; }
-  th, td { text-align:left; vertical-align:top; padding:7px 10px; border-top:1px solid var(--line); }
+  th, td { text-align:left; vertical-align:top; padding:8px 10px; border-top:1px solid var(--line); }
   th { color:var(--soft); font-weight:600; border-top:0; }
   .pass { color:var(--good); font-weight:700; } .fail { color:var(--bad); font-weight:700; }
-  pre { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; overflow:auto;
+  pre { background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:10px 12px; overflow:auto;
         font-family:Consolas, "Cascadia Mono", monospace; font-size:13px; }
   li { margin:5px 0; }
-  .form { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:12px 20px; }
+  .form { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap:var(--s3) var(--s5); }
   .form label, .pickers label { display:flex; flex-direction:column; gap:3px; font-weight:600; }
   .form small, .pickers small { font-weight:400; color:var(--soft); }
-  .form input, select { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line);
-                        border-radius:6px; padding:6px 8px; font-weight:400; }
-  .pickers { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px 16px; margin-bottom:12px; }
-  .scroll { overflow:auto; max-width:100%; border:1px solid var(--line); border-radius:8px; margin:10px 0; }
+  .pickers { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px 16px; margin-bottom:var(--s3); }
+  .scroll { overflow:auto; max-width:100%; border:1px solid var(--line); border-radius:var(--r); margin:10px 0; }
   .scroll table { font-size:13px; white-space:nowrap; }
   .scroll td, .scroll th { max-width:380px; overflow:hidden; text-overflow:ellipsis; }
   .role { display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:var(--accent); }
   td.hl, th.hl { background:color-mix(in srgb, var(--accent) 12%, transparent); }
   .notice { border-left:4px solid var(--warn); }
-  .logpanel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:4px 16px; }
+  .logpanel { background:var(--card); border:1px solid var(--line); border-radius:var(--r2); padding:4px var(--s4); }
   .logpanel .entry { border-top:1px solid var(--line); padding:10px 0; }
   .logpanel .entry:first-child { border-top:0; }
-  .logpanel .entry b { margin-right:8px; }
+  .logpanel .entry b { margin-right:var(--s2); }
   .logpanel ul { margin:4px 0 0; padding-left:20px; }
   .num { text-align:right; font-variant-numeric:tabular-nums; }
   [hidden] { display:none !important; }
+  @media (max-width: 760px) {
+    header { padding:var(--s3) var(--s4); } main { padding:var(--s3) var(--s4) 48px; }
+    .approver { margin-left:0; width:100%; } .approver input { flex:1; }
+    .strip { grid-template-columns:repeat(2, minmax(0, 1fr)); } .row { padding:var(--s3) var(--s4); }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation:none !important; scroll-behavior:auto !important; } }
 </style>
 </head>
 <body>
 <header>
   <h1>Reconciliation</h1>
   <span class="demo" id="demo" hidden>DEMO: made-up data, nothing is posted anywhere</span>
-  <nav class="tabs">
-    <button data-tab="connect">1. Connect</button>
-    <button data-tab="statement">2. Statement</button>
-    <button data-tab="run">3. Run</button>
-    <button data-tab="review" class="on">4. Review</button>
+  <nav class="tabs" aria-label="Sections">
+    <button data-tab="connect"><span class="n">1</span>Connect</button>
+    <button data-tab="statement"><span class="n">2</span>Statement</button>
+    <button data-tab="run"><span class="n">3</span>Run</button>
+    <button data-tab="review" class="on"><span class="n">4</span>Review</button>
     <button data-tab="setup">Guide</button>
   </nav>
   <label class="approver">Approver <input type="text" id="approver" placeholder="your name" autocomplete="name"></label>
@@ -211,7 +266,7 @@
     <p><label>Narrations are from <select id="r-bank"></select></label></p>
     <p id="r-ai-wrap" hidden><label><input type="checkbox" id="r-ai"> Use the AI reader for the narrations the rules cannot read</label></p>
     <div id="r-consent"></div>
-    <p><button id="r-match">Match</button> <span class="soft">Decides each line: post, a person, or ignore. Nothing is posted.</span></p>
+    <p><button class="approve" id="r-match">Match</button> <span class="soft">Decides each line: post, a person, or ignore. Nothing is posted.</span></p>
     <div id="r-summary"></div>
   </div>
   <h2>3. Post the clear ones</h2>
@@ -233,10 +288,10 @@
     <div class="tile"><small>Partner bank's share</small><b id="s-partner">…</b></div>
     <div class="tile"><small>Lender's share</small><b id="s-lender">…</b></div>
     <div class="tile"><small>Waiting for a person</small><b id="s-queue">…</b></div>
-    <div class="tile"><small>Loans in arrears</small><b id="s-arrears">–</b>
-      <button id="verify" title="Reads every loan from Fineract and checks the ledger against it. About 20 seconds for 260 loans.">Count</button>
+    <div class="tile"><small>Loans in arrears</small><b id="s-arrears" class="soft">Not counted yet</b>
+      <button id="verify" class="small" title="Reads every loan from Fineract and checks the ledger against it. About 20 seconds for 260 loans.">Count</button>
       <small id="s-verify"></small></div>
-    <div class="tile"><small>Partner report</small><a href="/partner_report.csv">Download CSV</a>
+    <div class="tile"><small>Partner report</small><a class="btn small" href="/partner_report.csv">Download CSV</a>
       <small>one row per loan per month</small></div>
   </div>
   <div id="log"></div>
@@ -418,7 +473,7 @@ function approver() {
 
 function renderRow(row) {
   const radio = "pick-" + row.txn_id;
-  const other = el("input", {type: "text", placeholder: "loan_ref", size: 12,
+  const other = el("input", {type: "text", placeholder: "loan_ref", size: 12, "aria-label": "loan_ref to use instead",
                              value: row.candidates.some(c => c.loan_ref === row.loan_ref) ? "" : row.loan_ref});
   const otherRadio = el("input", {type: "radio", name: radio, value: "", checked: !!other.value});
   other.addEventListener("input", () => { otherRadio.checked = true; });
@@ -430,12 +485,12 @@ function renderRow(row) {
     el("b", {}, c.borrower),
     el("span", {}, `${rupees(c.amount)} due ${c.due}`), el("br"),
     c.loan_id ? el("a", {href: mifosLoan(c, "general"), target: "_blank", rel: "noopener"}, "Open in Mifos") : null));
-  const note = el("input", {type: "text", class: "note", placeholder: "note: why (goes in the audit log)", value: row.note});
+  const note = el("input", {type: "text", class: "note", "aria-label": "Note for the audit log", placeholder: "note: why (goes in the audit log)", value: row.note});
   const message = el("div", {class: "problem", hidden: !row.problem}, row.problem ? "Refused: " + row.problem : "");
   const approve = el("button", {class: "approve"}, "Approve and post");
   const reject = el("button", {class: "reject"}, "Reject");
   const box = el("div", {class: "row"},
-    el("div", {class: "top"}, el("span", {}, row.date), el("span", {class: "amount"}, rupees(row.amount)),
+    el("div", {class: "top"}, el("span", {class: "amount"}, rupees(row.amount)), el("span", {}, row.date),
        el("span", {class: "soft mono"}, "UTR " + row.txn_id)),
     el("div", {class: "narration mono"}, row.narration),
     el("span", {class: "reason"}, "Why it is here: " + row.reason),
@@ -479,7 +534,7 @@ function renderRow(row) {
     const difference = Number(s.difference);
     const fact = !s.due ? "no instalment due within a month of the payment"
       : `${rupees(s.instalment)} due ${s.due}: ` + (s.equal ? "" : `paid ${rupees(Math.abs(difference))} ${difference < 0 ? "less" : "more"}`);
-    const use = el("button", {}, "Use this loan");
+    const use = el("button", {class: "small"}, "Use this loan");
     const card = el("div", {class: "cand sugg" + (used.ref === s.loan_ref ? " used" : "")},
       el("span", {class: "mono"}, s.loan_ref), " ", el("span", {class: "soft"}, `${s.confidence} likelihood`),
       el("b", {}, s.borrower),
@@ -525,6 +580,14 @@ function renderRow(row) {
   return box;
 }
 
+function emptyQueue() {
+  const go = el("button", {class: "approve"}, "Go to Run");
+  go.addEventListener("click", () => { history.replaceState(null, "", "#run"); openTab("run"); });
+  return el("div", {class: "box empty"}, el("div", {class: "ico", "aria-hidden": "true"}),
+    el("p", {class: "title"}, "All clear"),
+    el("p", {}, "Nothing is waiting for a decision. New unclear lines arrive when you press Match on the Run tab."), go);
+}
+
 async function load() {
   const state = await call("/api/state");
   if (state.error) return $("queue").replaceChildren(el("div", {class: "problem"}, state.error));
@@ -534,8 +597,7 @@ async function load() {
   $("s-partner").textContent = rupees(s.partner_share);
   $("s-lender").textContent = rupees(s.lender_share);
   $("s-queue").textContent = s.queue;
-  $("queue").replaceChildren(...(state.queue.length ? state.queue.map(renderRow) : [el("div", {class: "box soft"},
-    "Nothing is waiting for a decision. New unclear lines arrive when you press Match on the Run tab.")]));
+  $("queue").replaceChildren(...(state.queue.length ? state.queue.map(renderRow) : [emptyQueue()]));
 }
 
 $("verify").addEventListener("click", async () => {
@@ -545,6 +607,7 @@ $("verify").addEventListener("click", async () => {
   $("verify").disabled = false;
   if (v.error) return void ($("s-verify").textContent = v.error);
   $("s-arrears").textContent = `${v.arrears} of ${v.loans}`;
+  $("s-arrears").classList.remove("soft");
   $("s-verify").textContent = `ledger against Fineract: ${v.checked} rows, ${v.problems.length} problems` +
                               (v.problems.length ? ": " + v.problems.slice(0, 3).join("; ") : "");
 });
@@ -874,6 +937,7 @@ $("r-post").addEventListener("click", async () => {
 function openTab(name) {
   for (const other of document.querySelectorAll(".tabs button")) {
     other.classList.toggle("on", other.dataset.tab === name);
+    if (other.dataset.tab === name) other.setAttribute("aria-current", "page"); else other.removeAttribute("aria-current");
     $(other.dataset.tab).hidden = other.dataset.tab !== name;
   }
   if (name === "run") loadRun();
