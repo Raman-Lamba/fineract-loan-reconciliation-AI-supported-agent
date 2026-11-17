@@ -367,13 +367,24 @@ class ClientTest(unittest.TestCase):
         req, = opener.requests
         body = json.loads(req.data)
         self.assertEqual(req.full_url, "https://api.anthropic.com/v1/messages")
-        self.assertEqual((body["model"], body["output_config"]["effort"]), ("claude-opus-5-5", "low"))
-        self.assertEqual(body["fallbacks"], "default")
+        self.assertEqual((body["model"], body["output_config"]["effort"]), ("claude-haiku-5-5", "low"))
+        self.assertNotIn("fallbacks", body)  # Haiku has no server-side refusal fallback
         self.assertEqual(req.get_header("X-api-key"), KEY)
         self.assertEqual(req.get_header("Anthropic-version"), "2026-10-21")
         self.assertNotIn(KEY, req.data.decode())  # the key is a header, never in the body
         self.assertNotIn("pw", json.dumps(body["messages"]))
 
+
+    def test_a_stronger_model_gets_the_refusal_fallback(self):
+        client.record_consent(self.data)
+        self.env.write_text(f"MIFOSX_PASSWORD=pw
+ANTHROPIC_API_KEY={KEY}
+AI_MODEL=claude-opus-5-5
+")
+        opener = Opener(model_says({"items": []}))
+        client.sender(self.env, self.data, opener)(client.request("s", "p", {"type": "object"}))
+        body = json.loads(opener.requests[0].data)
+        self.assertEqual((body["model"], body["fallbacks"]), ("claude-opus-5-5", "default"))
     def test_another_model_from_env(self):
         client.record_consent(self.data)
         self.env.write_text(f"ANTHROPIC_API_KEY={KEY}\nAI_MODEL=claude-haiku-5-5\n")

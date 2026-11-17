@@ -103,7 +103,7 @@ two things the fixed rules cannot:
 
 | Choice (`AI_PROVIDER`) | Key line in `.env` | Address | Default model; others in the dropdown |
 |---|---|---|---|
-| Claude (`claude`, the default) | `ANTHROPIC_API_KEY` | `api.anthropic.com` (Messages API) | `claude-opus-5-5`; `claude-sonnet-5-5`, `claude-haiku-5-5` |
+| Claude (`claude`, the default) | `ANTHROPIC_API_KEY` | `api.anthropic.com` (Messages API) | `claude-haiku-5-5`; `claude-sonnet-5-5`, `claude-opus-5-5` for banks whose narrations the default misreads |
 | ChatGPT / OpenAI (`openai`) | `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-6.1-sol`; `gpt-6-astra`, `gpt-6.1-terra`, `gpt-6-luna` |
 | Gemini (`gemini`) | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-3.8-flash`; `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-4-hydrogen` |
 | Other (`other`) | `AI_API_KEY` (not needed on this computer) | `AI_BASE_URL`, yours, e.g. `http://localhost:11434/v1` | `AI_MODEL`, yours, e.g. `llama3.1` (examples only) |

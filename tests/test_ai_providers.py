@@ -177,7 +177,7 @@ class AdapterTest(Setup):
         req, = opener.requests
         self.assertEqual(req.full_url, "https://api.anthropic.com/v1/messages")
         self.assertEqual(req.get_header("X-api-key"), "sk-ant-x1234")
-        self.assertEqual(send.scope, "claude:claude-opus-5-5")
+        self.assertEqual(send.scope, "claude:claude-haiku-5-5")
 
 
 KEY_C = "sk-ant-test-NOT-A-REAL-KEY-0001"
@@ -205,7 +205,7 @@ class CacheAndConsentTest(Setup):
         cache.write_text(json.dumps({narration.key(LINE): {"payer_name": "MEENA IYER", "channel": "", "reference": "", "loan_account": ""},
                                      "junk": 5}))
         send = FakeSend(ITEMS)
-        send.scope = "claude:claude-opus-5-5"
+        send.scope = "claude:claude-haiku-5-5"
         out, stats = narration.extract([LINE], send, cache)
         self.assertEqual((stats["from_cache"], stats["sent"]), (0, 1))
         self.assertEqual(out[LINE]["payer_name"], "MEENA IYER")

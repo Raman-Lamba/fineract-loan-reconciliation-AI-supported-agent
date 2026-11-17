@@ -25,9 +25,11 @@ from pathlib import Path
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2026-10-21"
-# The claude-api skill's default model (Nov 2026). Thinking is always on for it; effort "low" keeps an
-# extraction cheap. AI_MODEL in .env picks another (claude-haiku-5-5 costs about a fortieth as much).
-DEFAULT_MODEL = "claude-opus-5-5"
+# Reading a narration into fields is extraction, not reasoning, so the default is the cheapest current Claude
+# model (Haiku 5.5: $0.10 / $0.50 per million tokens, about a fortieth of Opus 5.5's price). Layouts are
+# confirmed by a person and narrations are re-checked in code, so a weaker read costs a queue line, not a wrong
+# posting. AI_MODEL in .env (or the Connect tab) picks a stronger model if a bank's narrations need one.
+DEFAULT_MODEL = "claude-haiku-5-5"
 # Models that accept server-side refusal fallbacks; for others the parameter is left out.
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-fable-5-2"}
 TIMEOUT = 120  # seconds per attempt
@@ -39,7 +41,7 @@ SECRETS = ("MIFOSX_PASSWORD", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API
 # skill used for the first build and were not re-checked.
 PROVIDERS = {
     "claude": {"name": "Anthropic (Claude)", "label": "Anthropic's API", "model": DEFAULT_MODEL,
-               "models": [DEFAULT_MODEL, "claude-sonnet-5-5", "claude-haiku-5-5"], "key": "ANTHROPIC_API_KEY",
+               "models": [DEFAULT_MODEL, "claude-sonnet-5-5", "claude-opus-5-5"], "key": "ANTHROPIC_API_KEY",
                "verified": "Model ids and request shape carried over from the first build (claude-api skill); not re-checked."},
     "openai": {"name": "OpenAI (ChatGPT)", "label": "OpenAI's API", "base": "https://api.openai.com/v1",
                "model": "gpt-6.1-sol", "models": ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"],

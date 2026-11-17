@@ -279,7 +279,7 @@ def clean_settings(body: dict, current_provider: str = "") -> dict:
             raise ValueError(f"BANK must be one of {', '.join(BANKS)}")
         if name == "AI_MODEL" and value:
             if provider == "claude" and not re.fullmatch(r"claude-[a-z0-9.-]+", value):
-                raise ValueError("AI_MODEL must be a Claude model id such as claude-opus-5-5")
+                raise ValueError("AI_MODEL must be a Claude model id such as claude-haiku-5-5")
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", value):
                 raise ValueError("AI_MODEL must be a model name such as gemini-3.8-flash or llama3.1")
         if name == "AI_BASE_URL" and value and not re.match(r"https?://\S+$", value):
