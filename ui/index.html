@@ -134,9 +134,16 @@
       on that account. A weaker model sends more lines to a person, never a wrong posting.</p>
     <p>On the Review tab each unclear line also shows possible loans found on this computer, with no AI. With a second
       tick below, an "Ask AI to rank these" button on each line can have the AI put them in order with a reason.</p>
+    <p id="c-qwhy" class="soft">Why the split: the column layout is worked out once per bank format and a mistake there
+      touches every row, so it gets the strongest AI; reading the narrations is the bulk of the work; ranking possible
+      loans runs only when you click Ask AI and needs judgement. The cost is small either way.</p>
+    <p id="c-override" class="notice" style="padding-left:.8em" hidden>The model typed below (<code>AI_MODEL</code>) is overriding Quality: it does
+      every task. <button type="button" id="c-clearmodel">Clear it and use Quality</button></p>
     <div class="form">
       <label>Which AI service <select name="AI_PROVIDER" id="c-provider"></select>
         <small id="c-pnote"></small></label>
+      <label id="c-qlabel">Quality <select name="AI_QUALITY" id="c-quality"></select>
+        <small id="c-qnote"></small></label>
       <label>Model <input name="AI_MODEL" id="c-model" list="c-models" autocomplete="off">
         <datalist id="c-models"></datalist>
         <small id="c-mnote">Pick one or type the exact name. Empty means the one shown.</small></label>
@@ -289,7 +296,8 @@
             or <code>other</code> (names then come only from the AI reader)</td><td><code>hdfc</code></td></tr>
           <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Optional. Turns on the AI statement reader. Never shown on this page or in its log.</td><td>not set</td></tr>
           <tr><td><code>AI_PROVIDER</code>, <code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>AI_API_KEY</code>, <code>AI_BASE_URL</code></td><td>Optional. <code>AI_PROVIDER</code> is <code>claude</code> (default), <code>openai</code>, <code>gemini</code> or <code>other</code>. Each service has its own key line, so a key is never sent to another service: <code>ANTHROPIC_API_KEY</code> (Claude), <code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, and <code>AI_API_KEY</code> for <code>other</code>. <code>AI_BASE_URL</code> is for <code>other</code> only.</td><td>not set (Claude)</td></tr>
-          <tr><td><code>AI_MODEL</code></td><td>Optional. The model the reader uses.</td><td>not set (the provider's default)</td></tr>
+          <tr><td><code>AI_MODEL</code></td><td>Optional. One model for every task; overrides <code>AI_QUALITY</code> (Claude).</td><td>not set (the provider's default)</td></tr>
+          <tr><td><code>AI_QUALITY</code></td><td>Optional, Claude only: <code>balanced</code>, <code>best</code> or <code>cheapest</code>. Which Claude model does the layout, the narrations and the ranking.</td><td><code>balanced</code></td></tr>
           <tr><td><code>MIFOS_URL</code></td><td>Optional. Address of the Mifos web app, for the "open in Mifos" links, if it is not
             the host in <code>MIFOSX_BASE_URL</code>.</td><td>not set (<code>http://127.0.0.1:4200</code> is worked out)</td></tr>
           <tr><td><code>MIFOSX_SKIP_TLS_VERIFY</code></td><td>Optional. <code>true</code> only for an https test server with a self-signed certificate.</td><td>not set</td></tr>
@@ -606,7 +614,17 @@ function fillProviders() {
 function providerChanged(clear) {
   const p = SETTINGS.ai.providers[$("c-provider").value];
   if (clear) $("c-model").value = "";
-  $("c-model").placeholder = p.model || "the model's exact name";
+  const claude = $("c-provider").value === "claude", ai = SETTINGS.ai;
+  // Quality only exists for Claude; the other services use the one model shown.
+  for (const id of ["c-qlabel", "c-qwhy"]) $(id).hidden = !claude;
+  $("c-mnote").textContent = claude ? "Optional. A model typed here overrides Quality for every task. Pick one or type the exact name."
+                                    : "Pick one or type the exact name. Empty means the one shown.";
+  $("c-quality").replaceChildren(...ai.qualities.map(q => el("option", {value: q.id, selected: q.id === ai.quality}, q.label)));
+  const showExplain = () => { $("c-qnote").textContent = ai.qualities.find(q => q.id === $("c-quality").value).explain; };
+  $("c-quality").onchange = showExplain;
+  showExplain();
+  $("c-override").hidden = !(claude && ai.override && !clear);
+  $("c-model").placeholder = claude ? "empty: chosen by Quality" : p.model || "the model's exact name";
   $("c-models").replaceChildren(...p.models.map(m => el("option", {value: m})));
   $("c-baselabel").hidden = $("c-provider").value !== "other";
   $("c-keyname").textContent = $("c-provider").value === "other" ? "API key (empty for a model on this computer)" : p.name + " API key";
@@ -614,6 +632,7 @@ function providerChanged(clear) {
   $("c-keynote").textContent = SETTINGS.ai.key && $("c-provider").value === SETTINGS.ai.provider ? "Saved. Never shown here." : "Not set.";
 }
 $("c-provider").addEventListener("change", () => providerChanged(true));
+$("c-clearmodel").addEventListener("click", () => { $("c-model").value = ""; saveSettings(); });
 $("c-testai").addEventListener("click", async () => {
   $("c-testai").disabled = true;
   $("c-testai-state").textContent = "saving, then asking…";
@@ -639,7 +658,7 @@ function consentBox(kind = "read") {
   const tick = el("input", {type: "checkbox"});
   const save = el("button", {}, "Save my consent");
   const where = SETTINGS.ai.local ? "Your model runs on this computer, so nothing leaves it. "
-                                  : "It sends text to " + SETTINGS.ai.label + " (model " + SETTINGS.ai.model + "): ";
+                                  : "It sends text to " + SETTINGS.ai.label + " (model " + SETTINGS.ai.models_text + "): ";
   const box = kind === "suggest"
     ? el("div", {class: "box notice"},
         el("p", {}, el("b", {}, "Before Ask AI on the Review tab. "), where +

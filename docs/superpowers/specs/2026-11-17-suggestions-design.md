@@ -51,6 +51,7 @@ Ask AI needs both ticks (`ai.client.sender(kind="suggest")`).
 | No call without a key, the reader's consent and the suggestions' consent | `ai.client.sender(kind="suggest")` |
 | The shortlist is rebuilt on the server, never taken from the page | `ui.serve._shortlist` |
 | The audit records where the idea came from; the approver is the person | `ui.serve.decide` + `ui.serve._origin`: `[suggested by local similarity]` or `[suggested by AI (<provider>/<model>)]` in front of the note, which `review.apply` writes as `manual: ...`; "AI" only if the cached ranking for this line and model holds that loan, and no tag if the loan is not on the shortlist |
+| The ranking model is the Quality setting's `rank` model (Opus 5.5 by default; `AI_MODEL` overrides): `sender(..., task="rank")`; the audit label names it |
 | Cache per provider + model + narration + shortlist, checked again on read | `ai.rank.key`, `ai.rank.cached` (`data/ai_suggest_cache.json`) |
 
 Provider-independent: the same sender, adapters, refusal handling and key handling as stage one

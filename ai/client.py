@@ -25,11 +25,27 @@ from pathlib import Path
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2026-10-21"
-# Reading a narration into fields is extraction, not reasoning, so the default is the cheapest current Claude
-# model (Haiku 5.5: $0.10 / $0.50 per million tokens, about a fortieth of Opus 5.5's price). Layouts are
-# confirmed by a person and narrations are re-checked in code, so a weaker read costs a queue line, not a wrong
-# posting. AI_MODEL in .env (or the Connect tab) picks a stronger model if a bank's narrations need one.
-DEFAULT_MODEL = "claude-haiku-5-5"
+# The Claude provider's Quality: which model does which task. A layout is read once per bank format and a
+# mistake there touches every row; narration reading is the bulk job; ranking runs only on a click and needs
+# judgement. An explicit AI_MODEL overrides all of it.
+OPUS, SONNET, HAIKU = "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"
+QUALITIES = {
+    "balanced": {"layout": OPUS, "narration": SONNET, "rank": OPUS},
+    "best": {"layout": OPUS, "narration": OPUS, "rank": OPUS},
+    "cheapest": {"layout": HAIKU, "narration": HAIKU, "rank": HAIKU},
+}
+DEFAULT_QUALITY = "balanced"
+# Shown on the Connect tab: plain English, no model ids.
+QUALITY_TEXT = [
+    {"id": "balanced", "label": "Balanced (recommended)",
+     "explain": "The strongest AI works out each bank's column layout and puts possible loans in order; a fast, capable "
+                "one reads the many narrations."},
+    {"id": "best", "label": "Best",
+     "explain": "The strongest AI does everything. Costs the most; worth it if names are still misread."},
+    {"id": "cheapest", "label": "Cheapest",
+     "explain": "The smallest AI does everything. Costs the least, but misreads more and sends more lines to a person."},
+]
+TASKS = ("layout", "narration", "rank")
 # Models that accept server-side refusal fallbacks; for others the parameter is left out.
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-fable-5-2"}
 TIMEOUT = 120  # seconds per attempt
@@ -40,8 +56,8 @@ SECRETS = ("MIFOSX_PASSWORD", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API
 # call); anything else is marked unverified in the UI and README too. Claude's ids come from the claude-api
 # skill used for the first build and were not re-checked.
 PROVIDERS = {
-    "claude": {"name": "Anthropic (Claude)", "label": "Anthropic's API", "model": DEFAULT_MODEL,
-               "models": [DEFAULT_MODEL, "claude-sonnet-5-5", "claude-opus-5-5"], "key": "ANTHROPIC_API_KEY",
+    "claude": {"name": "Anthropic (Claude)", "label": "Anthropic's API", "model": "",  # chosen by Quality
+               "models": [HAIKU, SONNET, OPUS], "key": "ANTHROPIC_API_KEY",
                "verified": "Model ids and request shape carried over from the first build (claude-api skill); not re-checked."},
     "openai": {"name": "OpenAI (ChatGPT)", "label": "OpenAI's API", "base": "https://api.openai.com/v1",
                "model": "gpt-6.1-sol", "models": ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"],
@@ -97,8 +113,22 @@ def config(settings: dict) -> dict:
     local = provider == "other" and is_local(base)
     host = urllib.parse.urlparse(base).netloc if provider == "other" else provider
     label = f"the AI service at {host}" if provider == "other" and host else preset["label"]
-    return {"provider": provider, "name": preset["name"], "label": label, "model": settings.get("AI_MODEL") or preset["model"],
-            "base": base, "key": settings.get(preset["key"], ""), "local": local, "dest": host, "preset": preset}
+    override = settings.get("AI_MODEL") or ""
+    quality = settings.get("AI_QUALITY") if settings.get("AI_QUALITY") in QUALITIES else DEFAULT_QUALITY
+    if provider == "claude" and not override:
+        models = dict(QUALITIES[quality])
+    else:  # one model for every task: another provider's, or the person's own choice
+        models = dict.fromkeys(TASKS, override or preset["model"])
+    return {"provider": provider, "name": preset["name"], "label": label, "model": models["narration"], "models": models,
+            "quality": quality, "override": bool(override), "base": base, "key": settings.get(preset["key"], ""),
+            "local": local, "dest": host, "preset": preset}
+
+
+def task_config(cfg: dict, task: str) -> dict:
+    """cfg with the model for one task ("layout", "narration" or "rank"); scope() and the request then follow it."""
+    if task not in TASKS:
+        raise AIError(f"unknown AI task '{task}'")
+    return {**cfg, "model": cfg["models"][task]}
 
 
 def consent_text(cfg: dict, kind: str = "read") -> str:
@@ -107,7 +137,7 @@ def consent_text(cfg: dict, kind: str = "read") -> str:
     kind "read": the statement reader (stage one). kind "suggest": asking the AI to rank a line's possible loans,
     which also sends borrowers' names, so it is a separate tick (ai.rank).
     """
-    model = cfg["model"] or "none chosen"
+    model = (cfg["models"]["rank"] if kind == "suggest" else cfg["model"]) or "none chosen"
     if kind == "suggest":
         what = "I understand that, for lines I ask about, the narration and up to 5 possible borrowers' names are sent to "
         if cfg["local"]:
@@ -172,13 +202,13 @@ def scope(cfg: dict) -> str:
     return f"{cfg['provider']}:{cfg['model']}" + (f"@{cfg['base']}" if cfg["provider"] == "other" else "")
 
 
-def sender(env_file: Path, data: Path, opener=None, kind: str = "read"):
+def sender(env_file: Path, data: Path, opener=None, kind: str = "read", task: str = "narration"):
     """send(body) -> the model's JSON answer (a dict). Raises AIError without a key or consent.
 
     kind "suggest" (ai.rank) needs the suggestions' consent as well as the reader's.
-    send.scope is scope(cfg).
+    task ("layout", "narration" or "rank") picks the model for Claude; send.scope is scope() of that model.
     """
-    cfg = config(read_env(env_file))
+    cfg = task_config(config(read_env(env_file)), task)
     opener = opener or urllib.request.urlopen
     if cfg["provider"] != "claude":
         if not cfg["base"]:
@@ -340,7 +370,7 @@ def try_it(env_file: Path, data: Path, opener=None) -> dict:
         send(request("You check that a connection works.", 'Reply with {"ok": true}.', TEST_SCHEMA, 2000))
     except AIError as problem:
         return {"ok": False, "detail": str(problem), "fix": _fix(problem, locals().get("cfg"))}
-    return {"ok": True, "detail": f"{cfg['name']} answered with model {cfg['model']}.", "fix": ""}
+    return {"ok": True, "detail": f"{cfg['name']} answered with model {cfg['model']} (the one that reads narrations).", "fix": ""}
 
 
 def _fix(problem: AIError, cfg) -> str:

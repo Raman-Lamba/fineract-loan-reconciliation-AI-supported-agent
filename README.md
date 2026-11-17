@@ -12,7 +12,7 @@ All data is synthetic. This is a portfolio project, not a production or regulato
 |---|---|---|
 | **Use it without typing anything** | Double-click **`Start.bat`**, then follow the tabs in the browser: Connect, Statement, Run, Review ([No-code setup](#no-code-setup-startbat)) | Windows 10/11, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **See the page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
-| **Check the code works** | `python -m unittest discover -s tests` (243 tests, about 35 seconds) | Python 3.11+ only |
+| **Check the code works** | `python -m unittest discover -s tests` (258 tests, about 35 seconds) | Python 3.11+ only |
 | **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **Connect it to your own Fineract** | The page's Connect tab, or [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
 | **Feed it your own bank statement** | The page's Statement tab, or [Use your own bank statement](#use-your-own-bank-statement) | A CSV export: HDFC is found by itself; any other layout by choosing its columns, or by the optional AI reader |
@@ -104,12 +104,30 @@ two things the fixed rules cannot:
 
 | Choice (`AI_PROVIDER`) | Key line in `.env` | Address | Default model; others in the dropdown |
 |---|---|---|---|
-| Claude (`claude`, the default) | `ANTHROPIC_API_KEY` | `api.anthropic.com` (Messages API) | `claude-haiku-5-5`; `claude-sonnet-5-5`, `claude-opus-5-5` for banks whose narrations the default misreads |
+| Claude (`claude`, the default) | `ANTHROPIC_API_KEY` | `api.anthropic.com` (Messages API) | chosen by Quality (below); `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5` for a typed `AI_MODEL` |
 | ChatGPT / OpenAI (`openai`) | `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-6.1-sol`; `gpt-6-astra`, `gpt-6.1-terra`, `gpt-6-luna` |
 | Gemini (`gemini`) | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-3.8-flash`; `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-4-hydrogen` |
 | Other (`other`) | `AI_API_KEY` (not needed on this computer) | `AI_BASE_URL`, yours, e.g. `http://localhost:11434/v1` | `AI_MODEL`, yours, e.g. `llama3.1` (examples only) |
 
-`AI_MODEL` overrides the default for any of them; the Connect tab's model box takes a typed name as well as the
+**Quality (Claude only).** One setting, `AI_QUALITY`, chosen on the Connect tab as a dropdown (no model names to know):
+
+| Quality | Layout detection | Reading narrations | Ranking (Ask AI) |
+|---|---|---|---|
+| `balanced` (the default) | `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-opus-5-5` |
+| `best` | `claude-opus-5-5` | `claude-opus-5-5` | `claude-opus-5-5` |
+| `cheapest` | `claude-haiku-5-5` | `claude-haiku-5-5` | `claude-haiku-5-5` |
+
+Why the split: the layout is worked out once per bank format and a mistake there touches every row, so it gets the
+strongest model; reading narrations is the bulk of the work; ranking runs only when a person clicks Ask AI and needs
+judgement. The cost is small in every setting (a statement is roughly 1,600 short narrations; that is an estimate, not
+a measurement, and no live call has been made). The other services keep the single model shown. Changing only the
+quality does not ask for consent again (consent is per service), and answers are cached per model, so switching
+quality reads the file again rather than reusing another model's answers. Test AI uses the narration model and
+says which one it was.
+
+`AI_MODEL` overrides Quality for Claude (one model for every task) and the default for the other services, so an existing
+`.env` with `AI_MODEL` keeps working; the Connect tab says when it is overriding and has a button to clear it.
+The Connect tab's model box takes a typed name as well as the list; the Connect tab's model box takes a typed name as well as the
 list. Each service has its own key line, so a key is never sent to another service, and `AI_BASE_URL` counts
 for `other` only. The page has one key box (write-only) and saves the key under the right name. "Test AI" sends
 one fixed question ("reply with ok", no statement data) through the chosen service and says in plain English
@@ -152,9 +170,9 @@ three: OpenAI-style chat completions (`/chat/completions`), asking for a `json_s
 (if the service answers 400 or 422) JSON mode, then plain "reply with JSON only" with the schema in the prompt;
 our own parser strips a code fence or a sentence around the JSON, and the answer is then checked like any
 other. Only a finished answer is accepted (`end_turn` for Claude, `stop` for the others); a refusal or a
-cut-off one leaves the line unread. One timeout of 120 seconds, one retry on 429 or 5xx. Cost, rough and not
-measured: a layout read is one small request and a batch of 40 narrations is a few thousand tokens in and out,
-so a few US cents per batch on a flagship model and a fraction of a cent on a small one.
+cut-off one leaves the line unread. One timeout of 120 seconds, one retry on 429 or 5xx. Cost: a layout read is one
+small request and a batch of 40 narrations is a few thousand tokens in and out; the price is per token, so check
+your provider's current price list (no figure here is measured).
 
 **Not verified.** Live calls to any provider (Anthropic, OpenAI, Google, a local Ollama) have **not** been
 made: everything was tested with fake responses only (`tests/test_ai.py`, `tests/test_ai_providers.py`,
@@ -203,7 +221,7 @@ changes the queue's decision: "Use this loan" only fills the loan box, and the p
   which runs on this computer: nothing leaves it"). It is stored under `suggest` in `data\ai_consent.json`;
   changing provider, or the address of Other, asks again.
 - **Audit.** Approving a loan taken from a suggestion writes `[suggested by local similarity]` or
-  `[suggested by AI (claude/claude-haiku-5-5)]` in front of your note, so the audit log shows
+  `[suggested by AI (claude/claude-opus-5-5)]` (the ranking model) in front of your note, so the audit log shows
   `manual: [suggested by ...] your note`. The approver is still you.
 
 **How good the local list is** (`python -m review.measure_suggestions`, 17 Nov 2026, synthetic statement
@@ -636,7 +654,7 @@ The agent reads loans and schedules from Fineract's API and writes one thing bac
    | `MIFOSX_USERNAME` | The agent's Fineract user | `mifos` (the sandbox admin) |
    | `MIFOSX_PASSWORD` | Its password | written by `start.ps1` |
    | `BANK` | Whose narrations your bank export has: `hdfc`, `icici`, `sbi` or `other` | `hdfc` |
-   | `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `AI_API_KEY` | Optional: the [AI statement reader](#ai-statement-reader) (which service, model, address for Other, and that service's key) | not set (Claude) |
+   | `AI_PROVIDER`, `AI_QUALITY`, `AI_MODEL`, `AI_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `AI_API_KEY` | Optional: the [AI statement reader](#ai-statement-reader) (which service, Claude quality, model, address for Other, and that service's key) | not set (Claude) |
    | `MIFOS_URL` | Optional. The Mifos web app's address, for the "Open in Mifos" links, if it is not the host in `MIFOSX_BASE_URL` | not set |
    | `MIFOSX_SKIP_TLS_VERIFY` | Optional. `true` only for an https test server with a self-signed certificate | not set |
 

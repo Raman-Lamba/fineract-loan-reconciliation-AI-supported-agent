@@ -40,8 +40,8 @@ back a dict. Two adapters in `ai.client` carry it:
 
 - **Claude** (`AI_PROVIDER=claude`, the default; key `ANTHROPIC_API_KEY`): unchanged. Plain HTTPS POST to
   `https://api.anthropic.com/v1/messages`, headers `x-api-key`, `anthropic-version: 2026-10-21`; `model`
-  (`AI_MODEL`, default `claude-haiku-5-5`), `max_tokens`, `system`, one user message, `output_config: {effort:
-  "low", format: {type: "json_schema", schema}}`; for models that support it (not Haiku) `fallbacks: "default"` with the
+  (by task from `AI_QUALITY`, default `balanced`: layout and ranking Opus 5.5, narrations Sonnet 5.5; `best` all Opus, `cheapest` all Haiku; an explicit `AI_MODEL` overrides all tasks), `max_tokens`, `system`, one user message, `output_config: {effort:
+  "low", format: {type: "json_schema", schema}}`; for the request's model if it supports it (Opus and Sonnet do, not Haiku) `fallbacks: "default"` with the
   `server-side-fallback-2026-07-01` beta header. Only `stop_reason == "end_turn"` is accepted.
 - **OpenAI-style chat completions** (`openai`, `gemini`, `other`): POST `<base>/chat/completions` with
   `Authorization: Bearer <key>` (no header for a keyless local service), `model`, `messages` (system + user),

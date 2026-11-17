@@ -271,7 +271,7 @@ class PageTest(Page):
         self.opener.answers.append(model_says({"ranked": [{"loan_ref": "L9003", "reason": "<i>same surname</i>"},
                                                           {"loan_ref": "L0001", "reason": "not on the list"}]}))
         result = self.post("/api/suggest", {"txn_id": self.txn})
-        self.assertEqual(result["ai"], "claude/claude-haiku-5-5")
+        self.assertEqual(result["ai"], "claude/claude-opus-5-5")  # ranking uses Opus in the default quality
         self.assertEqual((result["suggestions"][0]["loan_ref"], result["suggestions"][0]["ai_reason"]),
                          ("L9003", "<i>same surname</i>"))
         self.assertEqual(sorted(s["loan_ref"] for s in result["suggestions"]), sorted(s["loan_ref"] for s in shortlist))
@@ -307,7 +307,7 @@ class PageTest(Page):
         self.post("/api/suggest", {"txn_id": self.txn})
         self.assertEqual(self.decide(origin="ai"), {"done": "posted"})
         audit, = files.read("audit.csv")
-        self.assertEqual(audit["reason"], "manual: [suggested by AI (claude/claude-haiku-5-5)] her sister")
+        self.assertEqual(audit["reason"], "manual: [suggested by AI (claude/claude-opus-5-5)] her sister")
 
     def test_an_origin_that_does_not_hold_is_not_recorded(self):
         # "ai" without the AI having been asked counts as the local list; a loan not on the list has no origin.

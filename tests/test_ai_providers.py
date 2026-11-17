@@ -177,7 +177,7 @@ class AdapterTest(Setup):
         req, = opener.requests
         self.assertEqual(req.full_url, "https://api.anthropic.com/v1/messages")
         self.assertEqual(req.get_header("X-api-key"), "sk-ant-x1234")
-        self.assertEqual(send.scope, "claude:claude-haiku-5-5")
+        self.assertEqual(send.scope, "claude:claude-sonnet-5-5")
 
 
 KEY_C = "sk-ant-test-NOT-A-REAL-KEY-0001"

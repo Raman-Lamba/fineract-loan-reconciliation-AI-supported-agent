@@ -50,7 +50,7 @@ MAX_BODY = 65536
 # The Connect form's fields: (name in .env, write-only?). Secrets are never sent back, only "saved" or not.
 SETTINGS = [("MIFOSX_BASE_URL", False), ("MIFOSX_TENANT_ID", False), ("MIFOSX_USERNAME", False),
             ("MIFOSX_PASSWORD", True), ("MIFOS_URL", False), ("BANK", False), ("ANTHROPIC_API_KEY", True),
-            ("AI_MODEL", False), ("AI_PROVIDER", False), ("AI_BASE_URL", False)]
+            ("AI_MODEL", False), ("AI_QUALITY", False), ("AI_PROVIDER", False), ("AI_BASE_URL", False)]
 # "AI_API_KEY" is the form's one key box: it is saved under the chosen provider's own name (ai.client.PROVIDERS),
 # so a key typed for one provider is never sent to another.
 KEY_BOX = "AI_API_KEY"
@@ -220,7 +220,7 @@ def ask_ai(env: Path, body: dict, opener=None) -> dict:
     shortlist = _shortlist(row, _schedules())
     out = {"suggestions": shortlist, "ai": "", "note": ""}
     try:
-        send = ai_client.sender(env, files.DATA, opener, kind="suggest")
+        send = ai_client.sender(env, files.DATA, opener, kind="suggest", task="rank")
     except ai_client.AIError as problem:
         return {**out, "note": f"The AI was not asked: {problem}. These are the local suggestions."}
     ranking, problem = ai_rank.rank(row["narration"], shortlist, send, files.DATA / "ai_suggest_cache.json")
@@ -230,7 +230,7 @@ def ask_ai(env: Path, body: dict, opener=None) -> dict:
 
 
 def _ai_label(env: Path) -> str:
-    cfg = ai_client.config(ai_client.read_env(env))
+    cfg = ai_client.task_config(ai_client.config(ai_client.read_env(env)), "rank")
     return f"{cfg['provider']}/{cfg['model']}"
 
 
@@ -244,7 +244,7 @@ def _origin(env: Path, row: dict, ref: str, origin) -> str:
         return ""
     if origin == "ai":
         try:
-            cfg = ai_client.config(ai_client.read_env(env))
+            cfg = ai_client.task_config(ai_client.config(ai_client.read_env(env)), "rank")
             ranked = ai_rank.cached(row["narration"], shortlist, ai_client.scope(cfg), files.DATA / "ai_suggest_cache.json")
         except ai_client.AIError:
             ranked = None
@@ -308,7 +308,9 @@ def ai_view(values: dict) -> dict:
         cfg = ai_client.config({})
     ready, consent = ai_client.available_for(cfg), ai_client.consent_given(files.DATA, cfg)
     suggest_consent = ai_client.consent_given(files.DATA, cfg, "suggest")
-    return {"provider": cfg["provider"], "model": cfg["model"], "base": cfg["base"], "local": cfg["local"],
+    return {"provider": cfg["provider"], "model": cfg["model"], "models": cfg["models"],
+            "models_text": ", ".join(dict.fromkeys(cfg["models"].values())), "quality": cfg["quality"],
+            "override": cfg["override"], "qualities": ai_client.QUALITY_TEXT, "base": cfg["base"], "local": cfg["local"],
             "key": bool(cfg["key"]), "ready": ready, "consent": consent,
             "consent_text": ai_client.consent_text(cfg), "label": cfg["label"],
             # "Ask AI" on the Review tab: only with the reader set up and both ticks
@@ -346,6 +348,8 @@ def clean_settings(body: dict, current_provider: str = "") -> dict:
                 raise ValueError("AI_MODEL must be a Claude model id such as claude-haiku-5-5")
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", value):
                 raise ValueError("AI_MODEL must be a model name such as gemini-3.8-flash or llama3.1")
+        if name == "AI_QUALITY" and value not in ("", *ai_client.QUALITIES):
+            raise ValueError(f"AI_QUALITY must be one of {', '.join(ai_client.QUALITIES)}")
         if name == "AI_BASE_URL" and value and not re.match(r"https?://\S+$", value):
             raise ValueError("AI_BASE_URL must start with http:// or https://, such as http://localhost:11434/v1")
         if name in ("ANTHROPIC_API_KEY", KEY_BOX) and re.search(r"\s", value):
@@ -459,7 +463,7 @@ def read_statement(env: Path, use_ai: bool, opener=None) -> dict:
         out.update(map=ai_layout.saved(text, layouts), source="saved")
     if out["map"] is None and use_ai:
         try:
-            raw = ai_layout.ask(rows, ai_client.sender(env, files.DATA, opener))
+            raw = ai_layout.ask(rows, ai_client.sender(env, files.DATA, opener, task="layout"))
             out.update(map=ai_layout.check(raw, text)[0], source="ai")
         except ai_client.AIError as problem:
             out.update(source=None, note=f"The AI reader did not run: {problem}.")

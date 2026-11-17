@@ -367,8 +367,8 @@ class ClientTest(unittest.TestCase):
         req, = opener.requests
         body = json.loads(req.data)
         self.assertEqual(req.full_url, "https://api.anthropic.com/v1/messages")
-        self.assertEqual((body["model"], body["output_config"]["effort"]), ("claude-haiku-5-5", "low"))
-        self.assertNotIn("fallbacks", body)  # Haiku has no server-side refusal fallback
+        self.assertEqual((body["model"], body["output_config"]["effort"]), ("claude-sonnet-5-5", "low"))  # the default quality reads narrations with Sonnet
+        self.assertEqual(body["fallbacks"], "default")  # Sonnet has the refusal fallback; Haiku does not (test_ai_quality)
         self.assertEqual(req.get_header("X-api-key"), KEY)
         self.assertEqual(req.get_header("Anthropic-version"), "2026-10-21")
         self.assertNotIn(KEY, req.data.decode())  # the key is a header, never in the body
