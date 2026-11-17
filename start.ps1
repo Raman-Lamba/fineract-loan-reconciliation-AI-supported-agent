@@ -47,7 +47,7 @@ if (-not (Test-Path $envFile)) {
 $py = Join-Path $root '.venv\Scripts\python.exe'
 if (-not (Test-Path $py)) {
     python -m venv (Join-Path $root '.venv')
-    & $py -m pip install --quiet -r (Join-Path $repo 'python\requirements.txt')
+    & $py -m pip install --quiet --disable-pip-version-check -r (Join-Path $repo 'python\requirements.txt')
     Stop-If ($LASTEXITCODE -ne 0) 'Could not install the connector requirements.'
 }
 

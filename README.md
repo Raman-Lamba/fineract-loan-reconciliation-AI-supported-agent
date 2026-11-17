@@ -4,6 +4,20 @@ An AI agent that matches incoming bank payments to loans in Apache Fineract, pos
 and splits each one between the lender and its partner bank. See [spec.md](spec.md) for the problem.
 All data is synthetic. This is a portfolio project, not a production or regulator-approved system.
 
+## Where to start
+
+| You want to | Do this | Needs |
+|---|---|---|
+| **See the review page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
+| **Check the code works** | `python -m unittest discover -s tests` (129 tests, about 10 seconds) | Python 3.11+ only |
+| **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
+| **Connect it to your own Fineract** | [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
+| **Feed it your own bank statement** | [Use your own bank statement](#use-your-own-bank-statement) | A CSV export; HDFC layout only so far |
+
+The scripts are PowerShell, so the full sandbox run is Windows-only today. The Python modules themselves are
+plain standard-library code; on macOS or Linux you can run them one at a time against any Fineract
+([Run the whole thing](#run-the-whole-thing) lists the commands).
+
 **Status: milestone 5, all five built (clear payments are posted to Fineract and split 80:20 in a ledger;
 unclear ones wait in a queue a person works in Excel; the partner bank gets a report checked against the
 ledger).** On 16 Nov 2026 a wipe and one `.\start.ps1 -Seed -Reconcile` rebuilt everything in 15
