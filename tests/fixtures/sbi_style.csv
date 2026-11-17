@@ -1,0 +1,14 @@
+UNVERIFIED MADE-UP FIXTURE: SBI-style layout and narrations from secondary research notes only. Not a real statement. Every person and number is invented.
+Account Name :,SAMPLE LENDER PVT LTD
+Account Number :,_XXXXXXX5678
+Start Date :,1 Sep 2026
+End Date :,30 Sep 2026
+
+Txn Date,Value Date,Description,Ref No./Cheque No.,Debit,Credit,Balance
+5 Sep 2026,5 Sep 2026,BY TRANSFER-UPI/CR/507296189750/RAMESH KUMAR/SBIN/ramesh@sbi/emi,,,"8,450.00","8,450.00"
+6 Sep 2026,6 Sep 2026,NEFT-CR-HDFCN52026090612345-ANITA SHARMA,HDFCN52026090612345,,"3,100.50","11,550.50"
+7 Sep 2026,7 Sep 2026,IMPS-612345678902-SUNIL VERMA-EMI,,,"12,000.00","23,550.50"
+8 Sep 2026,8 Sep 2026,TO TRANSFER-INB SMS CHARGES,,590.00,,"22,960.50"
+10 Sep 2026,10 Sep 2026,BY TRANSFER-UPI/CR/507296189751/MEENA IYER/UTIB/meena@okaxis/emi,,,"5,000.00","27,960.50"
+
+**This is a computer generated statement**

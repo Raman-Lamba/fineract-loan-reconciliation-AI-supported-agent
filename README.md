@@ -1,18 +1,21 @@
 # Reconciliation agent for a co-lending loan book
 
-An AI agent that matches incoming bank payments to loans in Apache Fineract, posts them as repayments,
-and splits each one between the lender and its partner bank. See [spec.md](spec.md) for the problem.
+An agent that matches incoming bank payments to loans in Apache Fineract, posts them as repayments,
+and splits each one between the lender and its partner bank. Fixed rules decide every payment; an optional
+AI statement reader (Claude) only reads bank statements in layouts the rules do not know, and never decides
+([AI statement reader](#ai-statement-reader)). See [spec.md](spec.md) for the problem.
 All data is synthetic. This is a portfolio project, not a production or regulator-approved system.
 
 ## Where to start
 
 | You want to | Do this | Needs |
 |---|---|---|
-| **See the review page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
-| **Check the code works** | `python -m unittest discover -s tests` (129 tests, about 10 seconds) | Python 3.11+ only |
+| **Use it without typing anything** | Double-click **`Start.bat`**, then follow the tabs in the browser: Connect, Statement, Run, Review ([No-code setup](#no-code-setup-startbat)) | Windows 10/11, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
+| **See the page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
+| **Check the code works** | `python -m unittest discover -s tests` (181 tests, about 20 seconds) | Python 3.11+ only |
 | **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
-| **Connect it to your own Fineract** | [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
-| **Feed it your own bank statement** | [Use your own bank statement](#use-your-own-bank-statement) | A CSV export; HDFC layout only so far |
+| **Connect it to your own Fineract** | The page's Connect tab, or [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
+| **Feed it your own bank statement** | The page's Statement tab, or [Use your own bank statement](#use-your-own-bank-statement) | A CSV export: HDFC is found by itself; any other layout by choosing its columns, or by the optional AI reader |
 
 The scripts are PowerShell, so the full sandbox run is Windows-only today. The Python modules themselves are
 plain standard-library code; on macOS or Linux you can run them one at a time against any Fineract
@@ -32,8 +35,97 @@ wrong, 273 queued for a person, ledger and partner report equal to Fineract.
 | 4 | Post repayments (UTR as `externalId`), 80:20 split ledger | built |
 | 5 | Review queue a person edits in Excel, partner report, end-to-end demo | built |
 | UI | Local review page for the same queue, and a setup guide with a live connection test ([Review page](#review-page)) | built |
+| No-code + AI reader, stage one | Connect, Statement and Run tabs and `Start.bat`, so nobody types a command or edits a file; an optional Claude reader for statement layouts and narrations the rules do not know ([No-code setup](#no-code-setup-startbat), [AI statement reader](#ai-statement-reader)) | built; the AI reader tested with a fake model only |
 
 Connecting it to a Fineract and Mifos of your own: [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos).
+
+## No-code setup (Start.bat)
+
+For a person who should never open a terminal. Once Docker Desktop, Git for Windows and Python are installed:
+
+1. **Double-click `Start.bat`** in the project folder. It starts the sandbox (the first time takes about 3
+   minutes) and opens http://127.0.0.1:8000 in the browser. Keep its window open; closing it stops the page.
+   If something is missing, the window stays open with a red STOP line saying what to do.
+2. **Connect tab.** Fineract's address, tenant, user and password (on the sandbox they are already filled in),
+   optionally the Mifos address, your bank, and a Claude API key. **Save** writes them into `.env`: lines it
+   does not know are kept, and a password or key is never shown again, only "Saved" or "Not set". Then
+   **Test connection**: seven read-only checks, each failure with its fix.
+3. **Statement tab.** Choose your bank's CSV export (up to 5 MB). **Read my statement** finds the columns (the
+   HDFC layout by its names, a layout you confirmed before, or the AI reader if a key is saved), shows the
+   first rows with the chosen columns marked, and how many credits and debits it reads. Any column can be
+   corrected from a dropdown. **Looks right, import it** writes `data\bank_statement.csv`. A row it cannot read
+   is shown with its row number and nothing is imported.
+4. **Run tab.** **Read the loans** (read-only), then **Match**: a table of how many lines would post, go to a
+   person or be ignored, and why, with the rupees. Nothing is posted yet. **Post the clear ones** asks you to
+   confirm the number of payments and the rupee total, then posts, checks the ledger against Fineract and
+   rebuilds the queue. Pressing either button twice is safe: what is in the ledger is never posted again.
+5. **Review tab.** The unclear lines, as before ([Review page](#review-page)).
+
+The Guide tab holds the rest: the Fineract user to create, what the agent expects from your Fineract, and
+troubleshooting.
+
+**What was checked** (17 Nov 2026). Against the live sandbox, with the page pointed at a copy of `data\` and of
+`.env` (`--data`, `--env`) so nothing real could change: Test connection, 7 of 7 passing; the HDFC-layout export
+`data\bank_export_hdfc.csv` uploaded and found as HDFC with no AI (1,695 rows, 1,654 credits, 41 debits), imported
+with the same txn_id, date and amount on all 1,654 lines as the synthetic statement; Read the loans (260 loans,
+4,587 instalments, read-only, 26 seconds); Match: 1,348 would post, 273 to a person, 33 ignored, the same decision
+on all 1,654 lines as `matcher.run` on the synthetic statement, and 0 to post because all 1,348 are already in the
+ledger. "Post the clear ones" was not pressed against the sandbox: `data\ledger.csv` and `data\audit.csv` had the
+same sha256 before and after. Posting from the Run tab, its confirmation and a second press were run in `--demo`
+mode (headless Chrome, the confirm box answered by script) and in the unit tests. `data\decisions.csv` from
+`matcher.run` is byte for byte the same as before this change (sha256 `9F2C9F7F…AB66`). All tabs were rendered in
+headless Chrome; nobody has clicked through them by hand yet. `Start.bat` itself was not double-clicked in this
+session.
+
+## AI statement reader
+
+Optional. Without an API key the page and every command work exactly as before: HDFC exports are found by
+themselves and any other layout's columns are chosen by hand from dropdowns.
+
+**What it does.** With a Claude API key saved on the Connect tab (and the consent box ticked once), it reads
+two things the fixed rules cannot:
+
+- **A statement layout it has not seen.** From the first 20 rows it proposes the header row, the date column
+  and date format, the narration, the reference, and how money is written (debit and credit columns, an amount
+  with a Dr/Cr column, an amount ending in Dr or Cr, or a signed amount). The proposal is then checked against
+  the whole file: every column must exist and every date and amount in the file must read with it. A map that
+  fails is not used and the reason is shown. A person confirms it with "Looks right, import it", and the
+  confirmed map is stored in `data\layouts.json` under a hash of the header row, so the same bank format is
+  never sent again. `start.ps1 -Reconcile` and `statement.import_bank --bank <bank>` use the confirmed map too.
+- **Narrations the rules cannot read** (a bank with no line in `FORMATS`, or a narration in a style the line
+  does not cover): about 40 per request it returns the payer's name, the channel, the reference and a loan
+  account if one is written there. Answers are cached by a hash of the narration in `data\ai_cache.json`, so a
+  re-run costs nothing.
+
+**What it never does.** It never chooses a loan, posts, approves or changes an outcome. Its fields only fill a
+blank that the rules left (`matcher.match.decide(..., extracted)`), and the rules then decide exactly as with
+a name they read themselves: the exact instalment amount, a due date within 5 days, one borrower who fits, no
+look-alike owing the same. It never overrides a rule's reading. A name or loan account must appear word for
+word in the narration and a reference must appear exactly, or it is dropped. Amount, date and txn_id always
+come from the statement's own columns. If the model's answer is malformed, cut off, refused, or the API does
+not answer, the line takes the rules' path and, if they cannot read it, goes to a person. Every reason that
+rests on a field the model read says "(read by the AI reader)" in the decision and the audit trail.
+
+**Privacy.** Before the first use the page shows what is sent and asks for a tick: "I understand narration
+text, which can include people's names, is sent to Anthropic's API". The tick is stored in
+`data\ai_consent.json`; without it no request is made. Sent: for the layout, the first 20 rows with every
+digit replaced by 9 (column names and narration words go; no amount, balance, date value or account number);
+for narrations, only the narration text of lines the rules could not read. Never sent: amounts, balances,
+account numbers from other columns, anything from `.env`. The key is sent only as Anthropic's `x-api-key`
+header; it is never shown on the page, put in a response or log, or committed (`.env` is git-ignored).
+
+**Model and cost.** Plain HTTPS to the Messages API (`urllib`, no SDK, no new dependency), model
+`claude-opus-5-5` by default (the current default model of Anthropic's own guidance, Nov 2026) at effort
+`low`, with JSON-schema structured output and Anthropic's server-side refusal fallback. `AI_MODEL` on the
+Connect tab picks another, such as `claude-haiku-5-5`, about a fortieth of the price. A rough estimate, not
+measured: a layout read is one small request, and a batch of 40 narrations is a few thousand tokens in and
+out, so a few US cents per batch on the default model and a fraction of a cent on Haiku. One timeout of 120
+seconds, one retry on 429 or 5xx.
+
+**Not verified.** Live calls to Anthropic's API have not been made: the reader was built and tested with a
+fake model only (`tests/test_ai.py`, `tests/test_ui_connect.py`). The ICICI, SBI and Axis test statements in
+`tests/fixtures/` are hand-made from secondary research notes, marked so in their first line, and use invented
+people; no real statement of those banks has been through it.
 
 ## Terms
 
@@ -110,10 +202,14 @@ only the demo reviewer reads it. Cases and outcomes:
 
 ## Use your own bank statement
 
+The no-typing way is the page's Statement tab ([No-code setup](#no-code-setup-startbat)). By hand:
+
 1. In your bank's net banking, download the account statement as CSV.
 2. Save it as `data\bank_export.csv`. Leave it as the bank made it: the account details above the table and
    the summary below it are skipped.
-3. Add a line `BANK=hdfc` to `.env` (the layout of the export; `hdfc` is the default and the only one so far).
+3. Add a line `BANK=hdfc` to `.env` (whose narrations the export has: `hdfc`, `icici`, `sbi` or `other`). For any
+   bank but `hdfc` the columns come from a map confirmed once on the Statement tab; without one the import stops
+   and says so.
 4. Run `.\start.ps1 -Reconcile`. It prints `Statement source: data\bank_export.csv`, then imports, matches,
    posts the clear lines, verifies the ledger and writes the review queue and partner report. There is no
    accuracy report: a real statement has no answer key. To go back to the synthetic statement, delete or
@@ -142,11 +238,13 @@ with no reference number is such a row: record it by hand in Fineract.
 |---|---|
 | Synthetic narrations (`UPI/..`, `NEFT-..`, `IMPS/P2A/..`, `NACH/..`) | measured against the answer key |
 | HDFC export columns, dates, amounts; HDFC narrations (`UPI-NAME-..`, `NEFT CR-IFSC-NAME-..`, `IMPS-ref-NAME-..`) | built from secondary sources and tested only on a synthetic HDFC-layout file we generate. **No real HDFC export has been through it.** |
-| ICICI narrations (`UPI/ref/../NAME`, `INF/NEFT/UTR/../NAME`, `MMT/IMPS/ref/../NAME`), SBI narrations (`NEFT-CR-..`, `IMPS-..`) | from secondary sources, the name position partly assumed; unit tests on made-up lines only. There is no ICICI or SBI column layout yet, so `import_bank` accepts only `--bank hdfc`. |
+| ICICI narrations (`UPI/ref/../NAME`, `INF/NEFT/UTR/../NAME`, `MMT/IMPS/ref/../NAME`), SBI narrations (`NEFT-CR-..`, `IMPS-..`) | from secondary sources, the name position partly assumed; unit tests on made-up lines only |
+| Any other column layout (ICICI-, SBI- and Axis-style test files in `tests/fixtures/`: separate debit/credit columns, an amount ending in Cr/Dr, dd-mm-yyyy and dd Mon yyyy dates, preamble lines) | a column map chosen on the Statement tab (or proposed by the AI reader) and checked against every row; the three test files are hand-made from secondary research notes, **unverified**, and import with the right txn_id, date and amount in the tests |
 
 Before trusting it with a real book: run a real export through `import_bank`, read the first queue it
 produces, and correct the bank's line in `FORMATS` (`matcher/match.py`, narration layouts) or `LAYOUTS`
-(`statement/import_bank.py`, column names). Adding a bank is one line in each. A wrong name position cannot
+(`statement/import_bank.py`, column names). Adding a bank's narrations is one line in `FORMATS`; its columns
+need no code, a confirmed column map is enough. A wrong name position cannot
 post on its own: a post still needs the exact instalment amount, a date within 5 days and one borrower who
 fits. Design: [docs/superpowers/specs/2026-11-16-bank-import-design.md](docs/superpowers/specs/2026-11-16-bank-import-design.md).
 
@@ -166,7 +264,9 @@ auto-posted, 0 duplicates posted. `posting.run` then posted nothing (all 1,348 a
 .venv\Scripts\python -m matcher.evaluate   # decisions against the answer key, with the targets
 ```
 
-Fixed rules, no language model: a repeated txn_id is ignored; a loan account in the narration names the
+Fixed rules decide; no language model decides anything (the optional [AI statement reader](#ai-statement-reader)
+can only fill in a payer's name or a loan account the rules could not read, and the same rules then decide).
+A repeated txn_id is ignored; a loan account in the narration names the
 loan; otherwise the payer's name and the exact amount must fit one loan with an instalment due within 5
 days. Where the name sits in a narration comes from a small table, one entry per format and one line per
 bank (`FORMATS` in `matcher/match.py`; `--bank` picks the line, the synthetic layout by default). Two loans that fit, a look-alike borrower (same surname and first initial) owing the same amount, a
@@ -331,10 +431,14 @@ A local web page for the same queue, for people who would rather click than edit
 library only: nothing to install, no build step.
 
 ```powershell
-.\start.ps1 -Ui                          # sandbox up, then the page at http://127.0.0.1:8000
+.\start.ps1 -Ui                          # sandbox up, then the page at http://127.0.0.1:8000 (Start.bat does this)
 .venv\Scripts\python -m ui.serve         # the page alone (Fineract already running); --port 8010 for another port
 .venv\Scripts\python -m ui.serve --demo  # a made-up queue and a made-up Fineract: try it without posting anywhere
+.venv\Scripts\python -m ui.serve --env C:\trial\.env --data C:\trial\data   # another .env and data folder (a copy, for a trial)
 ```
+
+The page's tabs are Connect, Statement, Run, Review and Guide; the first three are described in
+[No-code setup](#no-code-setup-startbat). The Review tab:
 
 - **Review tab.** Every line in `data\queue.csv` with its date, amount, narration and the reason it is there.
   The candidate loans sit side by side (borrower, loan_ref, the instalment due and its amount), each with a
@@ -349,10 +453,13 @@ library only: nothing to install, no build step.
   Count button for loans in arrears (it reads every loan from Fineract and checks the ledger against it, as
   `posting.verify` does; about 20 seconds for 260 loans). The partner report link rebuilds
   `data\partner_report.csv` from the ledger and downloads it.
-- **Setup tab** (http://127.0.0.1:8000/#setup). A read-only connection test and the guide in the next section.
+- **Guide tab** (http://127.0.0.1:8000/#setup). The guide in the next section. The read-only connection test
+  is on the Connect tab.
 - **Safety.** It listens on 127.0.0.1 only and refuses a request whose Host header is not this machine.
   Anything that changes data is a POST carrying a token made new each run and written into the page. The
-  Fineract password is never sent to the browser or logged.
+  Fineract password and the Claude API key are never sent to the browser or logged, and every JSON answer is
+  scrubbed of both. A statement upload is limited to 5 MB, any other request to 64 KB. Posting from the Run
+  tab needs the number of payments and the rupee total the person confirmed, and is refused if they changed.
 - **Limit.** One local user, no login: the approver is whatever name is typed. More than one reviewer, or
   any use beyond this machine, needs real accounts first, because that name is the audit trail.
 
@@ -368,7 +475,7 @@ sandbox. The page was rendered in headless Chrome (both tabs); nobody has clicke
 
 ## Connect to your own Fineract and Mifos
 
-The same guide is on the page's Setup tab, with a "Test connection" button.
+The same guide is on the page's Guide tab; the Connect tab saves these settings and has the "Test connection" button.
 
 ```
   YOUR SIDE (already running)                THIS AGENT (this machine)
@@ -398,7 +505,7 @@ The agent reads loans and schedules from Fineract's API and writes one thing bac
    | `READ_LOAN` | List loans, read schedules and transactions, find a repayment by its external id |
    | `REPAYMENT_LOAN` | Post a repayment. This is the only thing it writes. |
    | `READ_PAYMENTTYPE` | Look up the UPI / NEFT / IMPS / NACH payment types |
-   | `READ_CURRENCY` | Only for the INR check on the Setup tab |
+   | `READ_CURRENCY` | Only for the INR check on the Connect tab |
    | `READ_CLIENT` | Only for `start.ps1`'s start-up check, which lists one client |
 
    These five codes are in Fineract's own permission list (`GET /permissions` on the sandbox,
@@ -414,8 +521,8 @@ The agent reads loans and schedules from Fineract's API and writes one thing bac
    python -m venv .venv
    .venv\Scripts\python -m pip install -r vendor\mcp-mifosx\python\requirements.txt
    ```
-3. **Put the connection in `.env`** in the project folder (git-ignored; copy `.env.example`). The sandbox
-   values are the example:
+3. **Put the connection in `.env`**: fill in the page's Connect tab and press Save, or edit `.env` in the
+   project folder by hand (git-ignored; copy `.env.example`). The sandbox values are the example:
 
    | Setting | Meaning | Sandbox value |
    |---|---|---|
@@ -423,16 +530,18 @@ The agent reads loans and schedules from Fineract's API and writes one thing bac
    | `MIFOSX_TENANT_ID` | The Fineract tenant | `default` |
    | `MIFOSX_USERNAME` | The agent's Fineract user | `mifos` (the sandbox admin) |
    | `MIFOSX_PASSWORD` | Its password | written by `start.ps1` |
-   | `BANK` | Layout of your bank export, `data\bank_export.csv` | `hdfc` (the only one so far) |
+   | `BANK` | Whose narrations your bank export has: `hdfc`, `icici`, `sbi` or `other` | `hdfc` |
+   | `ANTHROPIC_API_KEY`, `AI_MODEL` | Optional: the [AI statement reader](#ai-statement-reader) | not set |
    | `MIFOS_URL` | Optional. The Mifos web app's address, for the "Open in Mifos" links, if it is not the host in `MIFOSX_BASE_URL` | not set |
    | `MIFOSX_SKIP_TLS_VERIFY` | Optional. `true` only for an https test server with a self-signed certificate | not set |
 
    `start.ps1` only writes `.env` when there is none, so your values are kept.
-4. **Start the page and test:** `.venv\Scripts\python -m ui.serve`, open http://127.0.0.1:8000/#setup, press
+4. **Start the page and test:** `.venv\Scripts\python -m ui.serve`, open http://127.0.0.1:8000/#connect, press
    "Test connection". It only reads (one login call, then GETs) and reports seven checks as pass or fail,
    each with its fix: Fineract answers at the URL, the tenant exists, the login works, INR is enabled, the
    four payment types exist, loans exist (and how many have an externalId), a loan's schedule can be read.
-5. **Read the loans:** `.venv\Scripts\python -m statement.fetch_schedules` writes `data\schedules.json`.
+5. **Read the loans:** the Run tab's "Read the loans", or `.venv\Scripts\python -m statement.fetch_schedules`;
+   either writes `data\schedules.json`.
 6. **Bring a bank statement** ([Use your own bank statement](#use-your-own-bank-statement)), import and match
    it. Nothing is posted yet. Read `data\decisions.csv` before going on.
 
@@ -494,7 +603,7 @@ not clicked through in a logged-in browser. The menu names in step 1 come from t
 
 | What you see | What to do |
 |---|---|
-| `Connection failed`, or the first check fails | Fineract is not running or `MIFOSX_BASE_URL` is wrong. It must end in `/fineract-provider/api/v1`. Restart the page after changing `.env`. |
+| `Connection failed`, or the first check fails | Fineract is not running or `MIFOSX_BASE_URL` is wrong. It must end in `/fineract-provider/api/v1`. Fix it on the Connect tab and press Save (a hand edit of `.env` needs a restart of the page). |
 | `Error 400` on every call | Unknown tenant: fix `MIFOSX_TENANT_ID`. |
 | `Error 401` | Wrong user or password in `.env`. |
 | `Error 403` | The user lacks a permission (step 1) or cannot see the loans' office. |

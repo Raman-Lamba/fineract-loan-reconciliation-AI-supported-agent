@@ -62,21 +62,142 @@
   pre { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; overflow:auto;
         font-family:Consolas, "Cascadia Mono", monospace; font-size:13px; }
   li { margin:5px 0; }
+  .form { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:12px 20px; }
+  .form label, .pickers label { display:flex; flex-direction:column; gap:3px; font-weight:600; }
+  .form small, .pickers small { font-weight:400; color:var(--soft); }
+  .form input, select { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line);
+                        border-radius:6px; padding:6px 8px; font-weight:400; }
+  .pickers { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px 16px; margin-bottom:12px; }
+  .scroll { overflow:auto; max-width:100%; border:1px solid var(--line); border-radius:8px; margin:10px 0; }
+  .scroll table { font-size:13px; white-space:nowrap; }
+  .scroll td, .scroll th { max-width:380px; overflow:hidden; text-overflow:ellipsis; }
+  .role { display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:var(--accent); }
+  td.hl, th.hl { background:color-mix(in srgb, var(--accent) 12%, transparent); }
+  .notice { border-left:4px solid var(--warn); }
+  .logpanel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:4px 16px; }
+  .logpanel .entry { border-top:1px solid var(--line); padding:10px 0; }
+  .logpanel .entry:first-child { border-top:0; }
+  .logpanel .entry b { margin-right:8px; }
+  .logpanel ul { margin:4px 0 0; padding-left:20px; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
   [hidden] { display:none !important; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Reconciliation review</h1>
+  <h1>Reconciliation</h1>
   <span class="demo" id="demo" hidden>DEMO: made-up data, nothing is posted anywhere</span>
   <nav class="tabs">
-    <button data-tab="review" class="on">Review</button>
-    <button data-tab="setup">Setup: connect your Fineract</button>
+    <button data-tab="connect">1. Connect</button>
+    <button data-tab="statement">2. Statement</button>
+    <button data-tab="run">3. Run</button>
+    <button data-tab="review" class="on">4. Review</button>
+    <button data-tab="setup">Guide</button>
   </nav>
   <label class="approver">Approver <input type="text" id="approver" placeholder="your name" autocomplete="name"></label>
 </header>
 
 <main>
+<section id="connect" hidden>
+  <div class="problem" id="c-missing" hidden>Not connected yet. Fill in the four Fineract boxes below, press <b>Save</b>,
+    then <b>Test connection</b>. On the demo sandbox started by Start.bat these are already filled in for you.</div>
+  <h2>Your Fineract</h2>
+  <div class="box">
+    <div class="form" id="c-form">
+      <label>Fineract API address <input name="MIFOSX_BASE_URL" placeholder="http://127.0.0.1:4200/fineract-provider/api/v1">
+        <small>Ends in /fineract-provider/api/v1. On Windows write 127.0.0.1, not localhost (each call to localhost waits 2 seconds).</small></label>
+      <label>Tenant <input name="MIFOSX_TENANT_ID" placeholder="default"><small>"default" on a standard install.</small></label>
+      <label>User name <input name="MIFOSX_USERNAME" autocomplete="off"><small>A Fineract user made for this agent (Guide tab, step 1).</small></label>
+      <label>Password <input name="MIFOSX_PASSWORD" type="password" autocomplete="new-password" placeholder="leave empty to keep the saved one">
+        <small data-saved="MIFOSX_PASSWORD"></small></label>
+      <label>Mifos web app address (optional) <input name="MIFOS_URL" placeholder="worked out from the API address">
+        <small>Only for the "Open in Mifos" links on the Review tab.</small></label>
+      <label>Your bank <select name="BANK"></select>
+        <small>Whose narrations the statement has. "other": a bank with no rules yet; names then come only from the AI reader.</small></label>
+    </div>
+  </div>
+  <h2>AI statement reader (optional)</h2>
+  <div class="box">
+    <p>With a Claude API key the page can read a bank statement in any layout: it proposes which column is which, and reads
+      the payer's name from narrations the rules do not know. It only reads. It never chooses a loan, never posts and never
+      approves: the matcher's fixed rules decide, and anything unclear still goes to a person. Without a key everything
+      works as before (HDFC layout, columns chosen by hand). Each use costs a little on your Anthropic account.</p>
+    <div class="form">
+      <label>Claude API key <input name="ANTHROPIC_API_KEY" type="password" autocomplete="off" placeholder="leave empty to keep the saved one">
+        <small data-saved="ANTHROPIC_API_KEY"></small></label>
+      <label>Model (optional) <input name="AI_MODEL" id="c-model" placeholder="claude-opus-5-5">
+        <small>Empty means claude-opus-5-5. claude-haiku-5-5 is much cheaper.</small></label>
+    </div>
+    <p><button id="c-forget">Forget the saved key</button></p>
+  </div>
+  <p><button class="approve" id="c-save">Save</button> <span id="c-state" class="soft"></span></p>
+  <p class="soft">Saved into <code>.env</code> in the project folder. A password or key is never shown again on this page,
+    only whether one is saved.</p>
+
+  <h2>Test the connection</h2>
+  <div class="box">
+    <p>Checks the Fineract saved above. It only reads: one login call, then GET requests. Nothing is created or changed.</p>
+    <p><button id="check">Test connection</button> <span id="check-state" class="soft"></span></p>
+    <table id="checks" hidden><thead><tr><th>Check</th><th>Result</th><th>What was found, and the fix</th></tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<section id="statement" hidden>
+  <h2>1. Choose your bank statement</h2>
+  <div class="box">
+    <p>In your bank's net banking, download the account statement as <b>CSV</b> and choose it here. Leave it as the bank
+      made it: account details above the table and a summary below it are fine. Up to 5 MB.</p>
+    <p><input type="file" id="st-file" accept=".csv,text/csv,text/plain"> <span id="st-upload" class="soft"></span></p>
+  </div>
+  <h2>2. Read it</h2>
+  <div class="box">
+    <p><label>Which bank is this? <select id="st-bank"></select></label></p>
+    <div id="st-consent"></div>
+    <p><button id="st-read">Read my statement</button> <span id="st-readstate" class="soft"></span></p>
+    <div id="st-note"></div>
+  </div>
+  <div id="st-map" hidden>
+    <h2>3. Check the columns</h2>
+    <div class="box">
+      <p id="st-source" class="soft"></p>
+      <div class="pickers" id="st-pickers"></div>
+      <div id="st-check"></div>
+      <div class="scroll"><table id="st-preview"></table></div>
+      <p><button class="approve" id="st-import">Looks right, import it</button> <span id="st-result"></span></p>
+      <p class="soft">Importing keeps the credits only and writes them to <code>data\bank_statement.csv</code>. The amount, date and
+        reference of every line come from your file's own columns, never from the AI reader. A row it cannot read stops the
+        import with its row number, and nothing is written.</p>
+    </div>
+  </div>
+</section>
+
+<section id="run" hidden>
+  <h2>1. Read the loans from Fineract</h2>
+  <div class="box">
+    <p id="r-loans" class="soft"></p>
+    <p><button id="r-read">Read the loans</button> <span class="soft">Only reads. About half a minute for 260 loans.</span></p>
+  </div>
+  <h2>2. Match</h2>
+  <div class="box">
+    <p id="r-statement"></p>
+    <p><label>Narrations are from <select id="r-bank"></select></label></p>
+    <p id="r-ai-wrap" hidden><label><input type="checkbox" id="r-ai"> Use the AI reader for the narrations the rules cannot read</label></p>
+    <div id="r-consent"></div>
+    <p><button id="r-match">Match</button> <span class="soft">Decides each line: post, a person, or ignore. Nothing is posted.</span></p>
+    <div id="r-summary"></div>
+  </div>
+  <h2>3. Post the clear ones</h2>
+  <div class="box">
+    <p id="r-pending" class="soft">Press Match first.</p>
+    <p><button class="approve" id="r-post" disabled>Post the clear ones</button></p>
+    <p class="soft">Posts each clear line to its loan in Fineract (the bank's UTR as the repayment's External Id, so it can never
+      be posted twice), splits it 80:20 in <code>data\ledger.csv</code>, checks the ledger against Fineract, and rebuilds
+      the Review tab's queue. Safe to press again: what is already posted is skipped.</p>
+  </div>
+  <h2>What happened</h2>
+  <div class="logpanel" id="r-log"><div class="entry soft">Nothing run yet.</div></div>
+</section>
+
 <section id="review">
   <div class="strip">
     <div class="tile"><small>Payments posted</small><b id="s-payments">…</b></div>
@@ -97,12 +218,11 @@
 </section>
 
 <section id="setup" hidden>
-  <h2>1. Test the connection</h2>
+  <h2>1. The order of the tabs</h2>
   <div class="box">
-    <p>Checks the Fineract this page is using. It only reads: one login call, then GET requests. Nothing is created or changed.</p>
-    <table id="settings"></table>
-    <p><button id="check">Test connection</button> <span id="check-state" class="soft"></span></p>
-    <table id="checks" hidden><thead><tr><th>Check</th><th>Result</th><th>What was found, and the fix</th></tr></thead><tbody></tbody></table>
+    <p><b>Connect</b> (save your Fineract and press Test connection), <b>Statement</b> (choose your bank CSV, check its columns,
+      import it), <b>Run</b> (read the loans, Match, then Post the clear ones), <b>Review</b> (decide the unclear lines).
+      Nothing needs a terminal or a file edited by hand.</p>
   </div>
 
   <h2>2. How to connect your own Fineract</h2>
@@ -134,7 +254,8 @@
         <span class="soft">These five codes are in Fineract's own permission list (<code>GET /permissions</code> on the sandbox,
         apache/fineract@7ac780192, 16 Nov 2026). Not yet tested: a full run as a user holding only these. Run "Test connection" as
         that user first; a missing permission shows up there as error 403.</span></li>
-      <li><b>Put the connection in <code>.env</code></b> (project folder; git-ignored). The sandbox values are the example:
+      <li><b>Fill in the Connect tab and press Save.</b> It writes these settings into <code>.env</code> (project folder;
+        git-ignored) for you. The sandbox values are the example:
         <table>
           <tr><th>Setting</th><th>Meaning</th><th>Sandbox value</th></tr>
           <tr><td><code>MIFOSX_BASE_URL</code></td><td>Fineract's API address, ending in <code>/fineract-provider/api/v1</code>.
@@ -143,21 +264,20 @@
           <tr><td><code>MIFOSX_TENANT_ID</code></td><td>The Fineract tenant</td><td><code>default</code></td></tr>
           <tr><td><code>MIFOSX_USERNAME</code></td><td>The agent's Fineract user</td><td><code>mifos</code> (the sandbox admin)</td></tr>
           <tr><td><code>MIFOSX_PASSWORD</code></td><td>Its password. Never shown on this page or in its log.</td><td>written by <code>start.ps1</code></td></tr>
-          <tr><td><code>BANK</code></td><td>Layout of your bank export, <code>data\bank_export.csv</code></td><td><code>hdfc</code> (the only one so far)</td></tr>
+          <tr><td><code>BANK</code></td><td>Whose narrations your bank statement has: <code>hdfc</code>, <code>icici</code>, <code>sbi</code>,
+            or <code>other</code> (names then come only from the AI reader)</td><td><code>hdfc</code></td></tr>
+          <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Optional. Turns on the AI statement reader. Never shown on this page or in its log.</td><td>not set</td></tr>
+          <tr><td><code>AI_MODEL</code></td><td>Optional. The Claude model the reader uses.</td><td>not set (<code>claude-opus-5-5</code>)</td></tr>
           <tr><td><code>MIFOS_URL</code></td><td>Optional. Address of the Mifos web app, for the "open in Mifos" links, if it is not
             the host in <code>MIFOSX_BASE_URL</code>.</td><td>not set (<code>http://127.0.0.1:4200</code> is worked out)</td></tr>
           <tr><td><code>MIFOSX_SKIP_TLS_VERIFY</code></td><td>Optional. <code>true</code> only for an https test server with a self-signed certificate.</td><td>not set</td></tr>
         </table></li>
-      <li><b>Start this page without the sandbox:</b> <code>.venv\Scripts\python -m ui.serve</code>.
-        (<code>.\start.ps1 -Ui</code> also starts the Docker sandbox, which you do not need for your own Fineract. Run plain
-        <code>.\start.ps1</code> once first: it creates <code>.venv</code> and fetches the connector.)</li>
-      <li><b>Press "Test connection"</b> above until every check passes.</li>
-      <li><b>Read the loans:</b> <code>.venv\Scripts\python -m statement.fetch_schedules</code> writes <code>data\schedules.json</code>.</li>
-      <li><b>Bring a bank statement</b> as <code>data\bank_export.csv</code>, then import and match without posting:
-        <code>.venv\Scripts\python -m statement.import_bank data\bank_export.csv --bank hdfc</code>, then
-        <code>.venv\Scripts\python -m matcher.run --bank hdfc</code>. Read <code>data\decisions.csv</code> before going on.</li>
-      <li><b>Post a few, look, then the rest:</b> <code>.venv\Scripts\python -m posting.run --limit 5</code>, check those five loans
-        in Mifos, then <code>posting.run</code>, <code>posting.verify</code>, <code>review.build</code>. The unclear lines then appear on the Review tab.</li>
+      <li><b>Press "Test connection"</b> on the Connect tab until every check passes.</li>
+      <li><b>Statement tab:</b> choose your bank's CSV, press "Read my statement", check the columns, then "Looks right, import it".</li>
+      <li><b>Run tab:</b> "Read the loans", then "Match". Read the table of what would post and why before going on.</li>
+      <li><b>Post, then look:</b> "Post the clear ones" (it asks you to confirm the number and the total), then open a few of
+        those loans in Mifos. The unclear lines appear on the Review tab.
+        <span class="soft">For a first trial of five lines only, the command line has <code>posting.run --limit 5</code>.</span></li>
     </ol>
     <p><b>Do not run <code>.\start.ps1 -Seed</code> or <code>seed.load_fineract</code> against a real Fineract.</b> The seed is for the
       demo sandbox only: it enables currencies and creates payment types, a loan product, 200 clients and 260 back-dated loans.</p>
@@ -206,10 +326,15 @@
   <div class="box">
     <table>
       <tr><th>What you see</th><th>What to do</th></tr>
-      <tr><td><code>Connection failed</code>, or check 1 fails</td><td>Fineract is not running or <code>MIFOSX_BASE_URL</code> is wrong. It must end in
-        <code>/fineract-provider/api/v1</code>. Restart this page after changing <code>.env</code>.</td></tr>
-      <tr><td><code>Error 400</code> on every call</td><td>Unknown tenant: fix <code>MIFOSX_TENANT_ID</code>.</td></tr>
-      <tr><td><code>Error 401</code></td><td>Wrong user or password in <code>.env</code>.</td></tr>
+      <tr><td><code>Connection failed</code>, or check 1 fails</td><td>Fineract is not running or the API address is wrong. It must end in
+        <code>/fineract-provider/api/v1</code>. Fix it on the Connect tab and press Save; no restart is needed.</td></tr>
+      <tr><td><code>Error 400</code> on every call</td><td>Unknown tenant: fix it on the Connect tab.</td></tr>
+      <tr><td><code>Error 401</code></td><td>Wrong user or password: fix them on the Connect tab.</td></tr>
+      <tr><td>"REFUSED" or "row N: ..." on the Statement tab</td><td>That row of your file cannot be read with the columns chosen (an
+        amount or date in another form, or a credit with no reference). Check the column choices; if they are right, fix or remove that row
+        in the file (a cash deposit with no reference is recorded by hand in Fineract) and choose the file again.</td></tr>
+      <tr><td>"AI reader did not run" or "not used"</td><td>No key saved, no consent ticked, or Anthropic's API did not answer. Nothing
+        is lost: choose the columns by hand, and unread narrations go to a person.</td></tr>
       <tr><td><code>Error 403</code></td><td>The user lacks a permission (table in step 1) or cannot see the loans' office.</td></tr>
       <tr><td>Everything is slow (2 seconds a call)</td><td>Use <code>127.0.0.1</code> instead of <code>localhost</code> in <code>MIFOSX_BASE_URL</code>.</td></tr>
       <tr><td>A row says <code>loan_ref '…' is not a known loan</code></td><td>The loan is newer than <code>data\schedules.json</code>, or the reference is
@@ -323,7 +448,7 @@ async function load() {
   $("s-lender").textContent = rupees(s.lender_share);
   $("s-queue").textContent = s.queue;
   $("queue").replaceChildren(...(state.queue.length ? state.queue.map(renderRow) : [el("div", {class: "box soft"},
-    "Nothing is waiting for a decision. New unclear lines arrive with the next .\\start.ps1 -Reconcile (or python -m review.build).")]));
+    "Nothing is waiting for a decision. New unclear lines arrive when you press Match on the Run tab.")]));
 }
 
 $("verify").addEventListener("click", async () => {
@@ -352,21 +477,269 @@ $("check").addEventListener("click", async () => {
     el("td", {}, el("div", {class: r.ok === false ? "mono" : ""}, r.detail), r.fix ? el("div", {}, el("b", {}, "Fix: "), r.fix) : null))));
 });
 
-for (const tab of document.querySelectorAll(".tabs button")) {
-  tab.addEventListener("click", () => {
-    for (const other of document.querySelectorAll(".tabs button")) {
-      other.classList.toggle("on", other === tab);
-      $(other.dataset.tab).hidden = other !== tab;
-    }
-  });
+// ---- Connect ---------------------------------------------------------------------------------------
+let SETTINGS = null;
+
+function showSettings(s) {
+  SETTINGS = s;
+  for (const input of $("connect").querySelectorAll("input[name], select[name]")) {
+    if (input.type === "password") input.value = "";  // a saved secret is never sent to the page
+    else if (input.name in s.values) input.value = s.values[input.name];
+  }
+  for (const note of document.querySelectorAll("[data-saved]"))
+    note.textContent = s.saved[note.dataset.saved] ? "Saved. Never shown here." : "Not set.";
+  const v = s.values;
+  $("c-missing").hidden = !!(v.MIFOSX_BASE_URL && v.MIFOSX_USERNAME && s.saved.MIFOSX_PASSWORD);
+  renderConsent();
+  refreshBanks();
 }
 
-if (location.hash === "#setup") document.querySelector('[data-tab="setup"]').click();  // so the README can link to the guide
+function fillBanks(select, banks, chosen) {
+  select.replaceChildren(...banks.map(b => el("option", {value: b, selected: b === chosen}, b)));
+}
+
+function refreshBanks() {
+  if (!SETTINGS) return;
+  fillBanks($("connect").querySelector('select[name="BANK"]'), SETTINGS.banks, SETTINGS.values.BANK || "hdfc");
+  fillBanks($("st-bank"), SETTINGS.banks, SETTINGS.values.BANK || "hdfc");
+}
+
+async function saveSettings(forget) {
+  const values = {};
+  for (const input of $("connect").querySelectorAll("input[name], select[name]")) values[input.name] = input.value;
+  $("c-save").disabled = true;
+  const s = await call("/api/settings", forget ? {values: {}, forget} : {values});
+  $("c-save").disabled = false;
+  if (s.error) return void ($("c-state").textContent = s.error);
+  $("c-state").textContent = s.problem ? "Not saved: " + s.problem : s.done;
+  if (!s.problem) showSettings(s);
+}
+$("c-save").addEventListener("click", () => saveSettings());
+$("c-forget").addEventListener("click", () => saveSettings(["ANTHROPIC_API_KEY"]));
+
+// The consent box: shown wherever the AI reader could run, until the person ticks it once (kept in data/).
+function consentBox() {
+  const tick = el("input", {type: "checkbox"});
+  const save = el("button", {}, "Save my consent");
+  const box = el("div", {class: "box notice"},
+    el("p", {}, el("b", {}, "Before the AI reader runs. "),
+      "It sends text to Anthropic's API (Claude): to find the columns, the first 20 rows of your file with every digit " +
+      "replaced by 9; to read payers, only the narrations the rules cannot read. Amounts, balances and account numbers " +
+      "from other columns are never sent, and neither is anything from .env except the key itself. Narrations can " +
+      "include borrowers' names. The model only reads: it never chooses a loan, posts or approves."),
+    el("p", {}, el("label", {}, tick, " " + SETTINGS.ai.consent_text)), save);
+  save.addEventListener("click", async () => {
+    if (!tick.checked) return alert("Tick the box first.");
+    const s = await call("/api/consent", {agree: true});
+    if (s.error || s.problem) return alert(s.error || s.problem);
+    showSettings(s);
+  });
+  return box;
+}
+
+function renderConsent() {
+  const need = SETTINGS.ai.key && !SETTINGS.ai.consent;
+  $("st-consent").replaceChildren(...(need ? [consentBox()] : []));
+  $("r-consent").replaceChildren(...(need ? [consentBox()] : []));
+  $("r-ai-wrap").hidden = !SETTINGS.ai.key;
+  $("r-ai").checked = SETTINGS.ai.key && SETTINGS.ai.consent;
+  $("r-ai").disabled = !SETTINGS.ai.consent;
+}
+
+// ---- Statement -------------------------------------------------------------------------------------
+const STYLES = {two_columns: "a Debit column and a Credit column", type_column: "one Amount column and a Dr/Cr column",
+                suffix: "one Amount column ending in Dr or Cr", signed: "one Amount column, debits negative"};
+const DATES = {"%d/%m/%y": "05/09/26", "%d/%m/%Y": "05/09/2026", "%d-%m-%y": "05-09-26", "%d-%m-%Y": "05-09-2026",
+               "%d.%m.%Y": "05.09.2026", "%d %b %Y": "05 Sep 2026", "%d-%b-%Y": "05-Sep-2026", "%d %b %y": "05 Sep 26",
+               "%d-%b-%y": "05-Sep-26", "%d/%b/%Y": "05/Sep/2026", "%Y-%m-%d": "2026-09-05"};
+const ROLES = {date: "date", narration: "narration", reference: "reference", credit: "credit", debit: "debit",
+               amount: "amount", type: "Dr/Cr"};
+const USES = {two_columns: ["credit", "debit"], type_column: ["amount", "type"], suffix: ["amount"], signed: ["amount"]};
+let READ = null, MAP = null;
+
+$("st-file").addEventListener("change", async () => {
+  const file = $("st-file").files[0];
+  if (!file) return;
+  if (file.size > 5000000) return void ($("st-upload").textContent = "This file is bigger than 5 MB: export a shorter period.");
+  $("st-upload").textContent = "saving…";
+  const result = await call("/api/upload", {name: file.name, text: await file.text()});
+  $("st-upload").textContent = result.error || result.problem || result.done + " Now press Read my statement.";
+  $("st-map").hidden = true;
+});
+
+$("st-read").addEventListener("click", async () => {
+  $("st-read").disabled = true;
+  const ai = !!(SETTINGS && SETTINGS.ai.key && SETTINGS.ai.consent);
+  $("st-readstate").textContent = ai ? "reading (the AI reader may take up to a minute)…" : "reading…";
+  READ = await call("/api/read", {ai});
+  $("st-read").disabled = false;
+  $("st-readstate").textContent = "";
+  if (READ.error || READ.problem) return void $("st-note").replaceChildren(el("div", {class: "problem"}, READ.error || READ.problem));
+  $("st-note").replaceChildren(...(READ.note ? [el("div", {class: "reason"}, READ.note)] : []));
+  MAP = READ.map || {header_row: READ.rows.findIndex(r => r.filter(Boolean).length > 2), date: -1, date_format: "%d/%m/%y",
+                     narration: -1, reference: -1, style: "two_columns", credit: -1, debit: -1, amount: -1, type: -1};
+  $("st-source").textContent = {hdfc: "Found the HDFC layout by its column names.",
+    saved: "Found a column map you confirmed before for this layout.",
+    ai: "The AI reader proposed these columns, and they read every row of your file. Check them before importing."}[READ.source]
+    || "Choose the columns yourself.";
+  $("st-map").hidden = false;
+  renderMap(READ);
+});
+
+function picker(label, value, options, onchange, hint) {
+  const select = el("select", {}, ...options.map(([v, text]) => el("option", {value: v, selected: v === value}, text)));
+  select.addEventListener("change", () => onchange(select.value));
+  return el("label", {}, label, select, hint ? el("small", {}, hint) : null);
+}
+
+function renderMap(check) {
+  const rows = READ.rows, header = rows[MAP.header_row] || [];
+  const columns = [["-1", "(none)"], ...header.map((name, i) => [String(i), `${i + 1}: ${name || "(no name)"}`])];
+  const set = field => value => { MAP[field] = field === "style" || field === "date_format" ? value : Number(value); refresh(); };
+  const column = (field, hint) => picker(`${ROLES[field]} column`, String(MAP[field]), columns, set(field), hint);
+  const pickers = [
+    picker("Column names are on", String(MAP.header_row),
+           rows.slice(0, 40).map((r, i) => [String(i), `row ${i + 1}: ${r.filter(Boolean).slice(0, 3).join(", ").slice(0, 50)}`])
+               .filter((_, i) => rows[i].some(Boolean)),
+           value => { MAP.header_row = Number(value); refresh(); }),
+    column("date", "the transaction date"),
+    picker("Dates look like", MAP.date_format, Object.entries(DATES), set("date_format")),
+    column("narration", "the description or remarks"),
+    column("reference", "cheque / reference number, if any"),
+    picker("Amounts are written as", MAP.style, Object.entries(STYLES), set("style")),
+    ...USES[MAP.style].map(field => column(field))];
+  $("st-pickers").replaceChildren(...pickers);
+
+  const roles = {};
+  for (const field of ["date", "narration", "reference", ...USES[MAP.style]]) if (MAP[field] >= 0) roles[MAP[field]] = ROLES[field];
+  const body = rows.slice(MAP.header_row + 1).filter(r => r.some(Boolean)).slice(0, 10);
+  const cell = (tag, text, i, top) => el(tag, {class: i in roles ? "hl" : "", title: text},
+    top && i in roles ? el("span", {class: "role"}, roles[i]) : null, text);
+  $("st-preview").replaceChildren(el("tr", {}, ...header.map((h, i) => cell("th", h, i, true))),
+    ...body.map(r => el("tr", {}, ...header.map((_, i) => cell("td", r[i] || "", i)))));
+
+  const box = $("st-check");
+  if (check.problem) box.replaceChildren(el("div", {class: "problem"}, "This would not import: " + check.problem));
+  else if (check.counts) box.replaceChildren(el("div", {class: "done"},
+    `Reads every row: ${check.counts.rows} transactions, ${check.counts.credits} credits to import, ${check.counts.debits} debits skipped` +
+    (check.counts.empty ? `, ${check.counts.empty} rows with no amount skipped` : "") + "."));
+  else box.replaceChildren();
+  $("st-import").disabled = !check.counts;
+}
+
+let previewing = 0;
+async function refresh() {
+  const mine = ++previewing;
+  renderMap({});
+  const check = await call("/api/preview", {map: MAP});
+  if (mine === previewing) renderMap(check.error ? {problem: check.error} : check);
+}
+
+$("st-import").addEventListener("click", async () => {
+  $("st-import").disabled = true;
+  const result = await call("/api/import", {map: MAP, bank: $("st-bank").value});
+  $("st-import").disabled = false;
+  if (result.error || result.problem)
+    return void $("st-result").replaceChildren(el("span", {class: "problem"}, result.error || result.problem));
+  const c = result.done;
+  $("st-result").replaceChildren(el("span", {class: "done"},
+    `Imported ${c.credits} credits (${c.debits} debits skipped). Next: the Run tab.`));
+  const s = await call("/api/settings");
+  if (!s.error) showSettings(s);
+  loadRun();
+});
+
+// ---- Run -------------------------------------------------------------------------------------------
+let PENDING = null;
+
+function logEntry(step, lines, bad) {
+  if ($("r-log").querySelector(".soft")) $("r-log").replaceChildren();
+  $("r-log").prepend(el("div", {class: "entry"}, el("b", {}, new Date().toLocaleTimeString()), el("b", {}, step),
+    bad ? el("div", {class: "problem"}, bad) : null, lines && lines.length ? el("ul", {}, ...lines.map(l => el("li", {}, l))) : null));
+}
+
+function showMatch(m) {
+  if (!m) { $("r-summary").replaceChildren(); $("r-pending").textContent = "Press Match first."; $("r-post").disabled = true; return; }
+  const words = {post: "would post", queue: "to a person", ignore: "ignored"};
+  $("r-summary").replaceChildren(
+    el("p", {}, el("b", {}, `${m.counts.post} would post, ${m.counts.queue} go to a person, ${m.counts.ignore} ignored`),
+       ` of ${m.lines} lines. Nothing has been posted by Match.`),
+    el("table", {}, el("tr", {}, el("th", {}, "Outcome"), el("th", {}, "Why"), el("th", {class: "num"}, "Lines"), el("th", {class: "num"}, "Rupees")),
+      ...m.reasons.map(r => el("tr", {}, el("td", {}, words[r.outcome]), el("td", {}, r.reason),
+                                el("td", {class: "num"}, r.lines), el("td", {class: "num"}, rupees(r.amount))))));
+  PENDING = m.pending;
+  $("r-pending").textContent = m.pending.count
+    ? `${m.pending.count} payments, ${rupees(m.pending.total)} in all, are ready to post.` +
+      (m.done_before ? ` ${m.done_before} more are already in the ledger and will be skipped.` : "")
+    : `Nothing to post: ${m.done_before ? "all " + m.done_before + " clear payments are already in the ledger" : "no line is clear"}.`;
+  $("r-post").disabled = !m.pending.count;
+}
+
+async function loadRun() {
+  const r = await call("/api/run");
+  if (r.error) return void logEntry("Run tab", [], r.error);
+  $("r-loans").textContent = r.loans ? `${r.loans} loans have been read from Fineract. Read them again after loans are added.`
+                                     : "No loans read yet. Press Read the loans (Fineract must be connected: Connect tab).";
+  $("r-statement").textContent = r.statement ? `The statement has ${r.statement} credit lines.`
+                                             : "No statement yet: import one on the Statement tab.";
+  fillBanks($("r-bank"), r.banks, r.bank);
+  showMatch(r.match);
+}
+
+$("r-read").addEventListener("click", async () => {
+  $("r-read").disabled = true;
+  const r = await call("/api/loans", {});
+  $("r-read").disabled = false;
+  if (r.error) return void logEntry("Read the loans", [], "Could not read the loans: " + r.error + " Check the Connect tab (Test connection).");
+  logEntry("Read the loans", r.log);
+  loadRun();
+});
+
+$("r-match").addEventListener("click", async () => {
+  $("r-match").disabled = true;
+  const r = await call("/api/match", {bank: $("r-bank").value, ai: $("r-ai").checked});
+  $("r-match").disabled = false;
+  if (r.error || r.problem) return void logEntry("Match", [], r.error || r.problem);
+  logEntry("Match", r.log);
+  showMatch(r.match);
+  load();
+});
+
+$("r-post").addEventListener("click", async () => {
+  if (!PENDING || !PENDING.count) return;
+  const ask = `Post ${PENDING.count} payments, ${rupees(PENDING.total)} in all, to Fineract?\n\nEach is posted to the loan the ` +
+              `rules matched and split 80:20 in the ledger. This page cannot undo a posting.`;
+  if (!confirm(ask)) return;
+  $("r-post").disabled = true;
+  logEntry("Post the clear ones", ["posting, then checking the ledger against Fineract…"]);
+  const r = await call("/api/post", {count: PENDING.count, total: PENDING.total});
+  if (r.error || r.problem) logEntry("Post the clear ones", [], r.error || r.problem);
+  else logEntry("Post the clear ones", r.log);
+  loadRun();
+  load();
+});
+
+// ---- Tabs ------------------------------------------------------------------------------------------
+function openTab(name) {
+  for (const other of document.querySelectorAll(".tabs button")) {
+    other.classList.toggle("on", other.dataset.tab === name);
+    $(other.dataset.tab).hidden = other.dataset.tab !== name;
+  }
+  if (name === "run") loadRun();
+}
+for (const tab of document.querySelectorAll(".tabs button")) {
+  tab.addEventListener("click", () => { history.replaceState(null, "", "#" + tab.dataset.tab); openTab(tab.dataset.tab); });
+}
+
 $("demo").hidden = !CONFIG.demo;
 $("pattern").textContent = `${CONFIG.mifos}/#/clients/{clientId}/loans-accounts/{loanId}/transactions`;
-$("settings").replaceChildren(el("tr", {}, el("th", {}, "In use now (.env)"), el("th", {}, "")),
-  ...Object.entries(CONFIG.settings).map(([key, value]) => el("tr", {}, el("td", {}, el("code", {}, key)), el("td", {class: "mono"}, value || "(not set)"))),
-  el("tr", {}, el("td", {}, el("code", {}, "MIFOSX_PASSWORD")), el("td", {class: "soft"}, "set in .env; never shown here")));
+(async () => {
+  const s = await call("/api/settings");
+  if (!s.error) showSettings(s);
+  const wanted = location.hash.slice(1);  // so the README can link to a tab (#setup, #connect, ...)
+  const ready = !!s.error || CONFIG.demo || $("c-missing").hidden;  // not connected yet: start on Connect
+  openTab($(wanted) && document.querySelector(`[data-tab="${wanted}"]`) ? wanted : ready ? "review" : "connect");
+})();
 try { $("approver").value = localStorage.getItem("approver") || ""; } catch (error) { /* private window: just not remembered */ }
 $("approver").addEventListener("input", () => {
   $("approver").classList.remove("missing");
