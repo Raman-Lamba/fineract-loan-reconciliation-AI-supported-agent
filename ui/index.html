@@ -125,6 +125,9 @@
   .form { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap:var(--s3) var(--s5); }
   .form label, .pickers label { display:flex; flex-direction:column; gap:3px; font-weight:600; }
   .form small, .pickers small { font-weight:400; color:var(--soft); }
+  .choice { border:1px solid var(--line); border-radius:var(--r); padding:var(--s2) var(--s3); margin:0; }
+  .choice legend { font-weight:600; padding:0 var(--s1); }
+  .choice label { display:inline-flex; flex-direction:row; align-items:center; gap:var(--s1); font-weight:500; margin-right:var(--s4); }
   .pickers { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:10px 16px; margin-bottom:var(--s3); }
   .scroll { overflow:auto; max-width:100%; border:1px solid var(--line); border-radius:var(--r); margin:10px 0; }
   .scroll table { font-size:13px; white-space:nowrap; }
@@ -190,7 +193,12 @@
         <small>Fills the boxes below. "Other": type everything yourself.</small></label>
       <label>Currency (ISO code) <input name="CURRENCY" id="c-currency" maxlength="3" placeholder="INR" autocomplete="off">
         <small>Three letters, such as INR, EUR, USD. Must be enabled in Fineract (Test connection checks).</small></label>
-      <label>Partner bank's share (%) <input name="PARTNER_SHARE_PERCENT" id="c-share" inputmode="decimal" placeholder="80">
+      <fieldset class="choice"><legend>Do you share your loans with a partner bank?</legend>
+        <label><input type="radio" name="CO_LENDING" value="yes" checked> Yes</label>
+        <label><input type="radio" name="CO_LENDING" value="no"> No</label>
+        <small>Yes: each repayment is split between the partner and you. No: every repayment is recorded as 100% yours.
+          It applies to new payments only.</small></fieldset>
+      <label id="c-share-label">Partner bank's share (%) <input name="PARTNER_SHARE_PERCENT" id="c-share" inputmode="decimal" placeholder="80">
         <small>0 to 100; decimals such as 62.5 are fine. The lender keeps the rest. Check your co-lending agreement.</small></label>
       <label>Date order <select name="DATE_ORDER" id="c-date-order">
           <option value="auto">auto: work it out from the whole file</option>
@@ -208,6 +216,10 @@
         <small>Comma-separated names. A repayment whose narration holds one of them as a word is posted with the Fineract payment type of that name, if there is one.</small></label>
     </div>
     <p id="c-locale-problem" class="problem" hidden></p>
+    <div id="c-mode-warn" class="problem" hidden>
+      <p id="c-mode-text"></p>
+      <label><input type="checkbox" id="c-mode-ok"> I understand: save this change</label>
+    </div>
   </div>
 
   <h2>AI statement reader (optional)</h2>
@@ -311,7 +323,7 @@
     <p id="r-pending" class="soft">Press Match first.</p>
     <p><button class="approve" id="r-post" disabled>Post the clear ones</button></p>
     <p class="soft">Posts each clear line to its loan in Fineract (the bank's UTR as the repayment's External Id, so it can never
-      be posted twice), splits it <span class="ratio">by your partner share</span> in <code>data\ledger.csv</code>, checks the ledger against Fineract, and rebuilds
+      be posted twice), <span data-w="post_help">splits it by your partner share in</span> <code>data\ledger.csv</code>, checks the ledger against Fineract, and rebuilds
       the Review tab's queue. Safe to press again: what is already posted is skipped.</p>
   </div>
   <h2>What happened</h2>
@@ -322,13 +334,13 @@
   <div class="strip">
     <div class="tile"><small>Payments posted</small><b id="s-payments">…</b></div>
     <div class="tile"><small>Amount posted</small><b id="s-amount">…</b></div>
-    <div class="tile"><small>Partner bank's share</small><b id="s-partner">…</b></div>
-    <div class="tile"><small>Lender's share</small><b id="s-lender">…</b></div>
+    <div class="tile" data-co><small>Partner bank's share</small><b id="s-partner">…</b></div>
+    <div class="tile"><small data-w="lender_tile">Lender's share</small><b id="s-lender">…</b></div>
     <div class="tile"><small>Waiting for a person</small><b id="s-queue">…</b></div>
     <div class="tile"><small>Loans in arrears</small><b id="s-arrears" class="soft">Not counted yet</b>
       <button id="verify" class="small" title="Reads every loan from Fineract and checks the ledger against it. About 20 seconds for 260 loans.">Count</button>
       <small id="s-verify"></small></div>
-    <div class="tile"><small>Partner report</small><a class="btn small" href="/partner_report.csv">Download CSV</a>
+    <div class="tile"><small data-w="report_title">Partner report</small><a class="btn small" id="s-report" href="/partner_report.csv">Download CSV</a>
       <small>one row per loan per month</small></div>
   </div>
   <div id="log"></div>
@@ -357,8 +369,8 @@
      ├──── repayment, externalId = UTR ◀── clear lines (automatic)
      ├──── repayment, externalId = UTR ◀── unclear lines, after a person approves here
      │                                             │
-  Mifos web app (shows the same loans)       data\ledger.csv (split by PARTNER_SHARE_PERCENT), data\audit.csv,
-  staff see each repayment on the loan       data\queue.csv, data\partner_report.csv</pre>
+  Mifos web app (shows the same loans)       data\ledger.csv (<span data-w="ledger_note">split by PARTNER_SHARE_PERCENT</span>), data\audit.csv,
+  staff see each repayment on the loan       data\queue.csv, data\<span data-w="report_file">partner_report.csv</span></pre>
     <ol>
       <li><b>Make a Fineract user for the agent.</b> Do not use the admin account. In Mifos: Admin &gt; System &gt;
         Manage Roles and Permissions, create a role with only the permissions in the table below, then
@@ -384,7 +396,9 @@
           <tr><td><code>MIFOSX_TENANT_ID</code></td><td>The Fineract tenant</td><td><code>default</code></td></tr>
           <tr><td><code>MIFOSX_USERNAME</code></td><td>The agent's Fineract user</td><td><code>mifos</code> (the sandbox admin)</td></tr>
           <tr><td><code>MIFOSX_PASSWORD</code></td><td>Its password. Never shown on this page or in its log.</td><td>written by <code>start.ps1</code></td></tr>
-          <tr><td><code>COUNTRY</code>, <code>CURRENCY</code>, <code>PARTNER_SHARE_PERCENT</code>, <code>DATE_ORDER</code>, <code>NUMBER_FORMAT</code>, <code>CHANNELS</code></td><td>Where your lender is. The country is a starting point that fills the other boxes; change any of them. See "Using it outside India" in the README. Preset details are unverified.</td><td>India, INR, 80, day-first, 1,234.56, UPI,NEFT,IMPS,NACH</td></tr>
+          <tr><td><code>COUNTRY</code>, <code>CURRENCY</code>, <code>DATE_ORDER</code>, <code>NUMBER_FORMAT</code>, <code>CHANNELS</code></td><td>Where your lender is. The country is a starting point that fills the other boxes; change any of them. See "Using it outside India" in the README. Preset details are unverified.</td><td>India, INR, day-first, 1,234.56, UPI,NEFT,IMPS,NACH</td></tr>
+          <tr><td><code>CO_LENDING</code></td><td><code>yes</code> or <code>no</code>: do you share your loans with a partner bank? With <code>no</code> there is no partner: every repayment is recorded as 100% the lender's (the ledger keeps its columns, with a partner share of 0.00), and the report is <code>data\repayments_report.csv</code> with no partner columns. A change applies to new payments only; payments already recorded are never rewritten, and the change is logged in <code>data\audit.csv</code>.</td><td><code>yes</code></td></tr>
+          <tr><td><code>PARTNER_SHARE_PERCENT</code></td><td>Co-lending only: the partner bank's share, 0 to 100. 80 is an example, not a rule; ignored when <code>CO_LENDING</code> is <code>no</code>.</td><td>80</td></tr>
           <tr><td><code>BANK</code></td><td>Whose narrations your bank statement has: <code>hdfc</code>, <code>icici</code>, <code>sbi</code>,
             or <code>other</code> (names then come only from the AI reader)</td><td><code>hdfc</code></td></tr>
           <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Optional. Turns on the AI statement reader. Never shown on this page or in its log.</td><td>not set</td></tr>
@@ -411,7 +425,7 @@
     <table>
       <tr><th>In Fineract</th><th>How the agent uses it</th></tr>
       <tr><td>Each loan's <b>External Id</b></td><td>Your own loan reference. It becomes <code>loan_ref</code> everywhere: the matcher,
-        the queue, the ledger and the partner report. A loan with no External Id is known by its Fineract account number
+        the queue, the ledger and the <span data-w="report_name">partner report</span>. A loan with no External Id is known by its Fineract account number
         instead (for example <code>000000042</code>). Excel drops leading zeros from such a number, so decide those lines on this page, not in Excel.</td></tr>
       <tr><td>The <b>client's display name</b> on the loan</td><td>Matched against the payer's name in the bank narration. The first word is taken
         as the first name and the rest as the surname.</td></tr>
@@ -478,7 +492,7 @@ const CONFIG = __CONFIG__;
 const $ = id => document.getElementById(id);
 // Money is shown with the browser's own currency formatting for the locale and currency set on the Connect tab.
 // A browser that does not know the locale or currency gets the ISO code and a plain number instead.
-let MONEY = CONFIG.money, FORMATTER = null;
+let MONEY = CONFIG.money, FORMATTER = null, WORDS = CONFIG.words;
 function money(text) {
   const value = Number(text);
   try {
@@ -491,7 +505,14 @@ function money(text) {
 function count(number) {
   try { return number.toLocaleString(MONEY.locale); } catch (error) { return String(number); }
 }
-function showRatio() { for (const node of document.querySelectorAll(".ratio")) node.textContent = MONEY.ratio; }
+// Text that differs with and without a partner bank comes from the server (locale_settings.words): data-w names the
+// word, data-co marks what only a co-lending lender sees.
+function showWords(words, coLending) {
+  WORDS = words;
+  for (const node of document.querySelectorAll("[data-w]")) node.textContent = words[node.dataset.w];
+  for (const node of document.querySelectorAll("[data-co]")) node.hidden = !coLending;
+  $("s-report").href = "/" + words.report_file;
+}
 
 // Bank narrations and names are other people's text: always set as text, never as HTML.
 function el(tag, attrs = {}, ...children) {
@@ -687,13 +708,15 @@ function showSettings(s) {
   SETTINGS = s;
   MONEY = {currency: s.values.CURRENCY, locale: s.locale.ui_locale, ratio: s.locale.ratio, minor: s.locale.minor};
   FORMATTER = null;
-  showRatio();
+  showWords(s.locale.words, s.values.CO_LENDING !== "no");
   $("c-country").replaceChildren(...Object.keys(s.locale.presets).map(name => el("option", {value: name}, name)));
   $("c-locale-problem").hidden = !s.locale.problem;
   $("c-locale-problem").textContent = s.locale.problem;
   $("st-date-order").value = s.values.DATE_ORDER;
   $("st-number-format").value = s.values.NUMBER_FORMAT;
-  for (const input of $("connect").querySelectorAll("input[name], select[name]")) {
+  for (const radio of document.getElementsByName("CO_LENDING")) radio.checked = radio.value === s.values.CO_LENDING;
+  modeChanged();
+  for (const input of $("connect").querySelectorAll("input[name]:not([type=radio]), select[name]")) {
     if (input.type === "password") input.value = "";  // a saved secret is never sent to the page
     else if (input.name in s.values) input.value = s.values[input.name];
   }
@@ -716,11 +739,26 @@ function refreshBanks() {
   fillBanks($("st-bank"), SETTINGS.banks, SETTINGS.values.BANK || "hdfc");
 }
 
+const coLending = () => document.querySelector('input[name="CO_LENDING"]:checked').value;
+
+// Picking the other answer hides the partner percentage; if payments are already recorded, it also asks to confirm.
+function modeChanged() {
+  const no = coLending() === "no";
+  $("c-share-label").hidden = no;
+  $("c-share").disabled = no;
+  const differs = !!SETTINGS && coLending() !== SETTINGS.values.CO_LENDING;
+  $("c-mode-warn").hidden = !(differs && SETTINGS.locale.mode_warning);
+  $("c-mode-text").textContent = SETTINGS ? SETTINGS.locale.mode_warning : "";
+  if ($("c-mode-warn").hidden) $("c-mode-ok").checked = false;
+}
+for (const radio of document.getElementsByName("CO_LENDING")) radio.addEventListener("change", modeChanged);
+
 async function saveSettings(forget) {
-  const values = {};
-  for (const input of $("connect").querySelectorAll("input[name], select[name]")) values[input.name] = input.value;
+  const values = {CO_LENDING: coLending()};
+  for (const input of $("connect").querySelectorAll("input[name]:not([type=radio]), select[name]")) values[input.name] = input.value;
   $("c-save").disabled = true;
-  const s = await call("/api/settings", forget ? {values: {}, forget} : {values});
+  const body = forget ? {values: {}, forget} : {values, confirm_mode_change: $("c-mode-ok").checked, approver: $("approver").value.trim()};
+  const s = await call("/api/settings", body);
   $("c-save").disabled = false;
   if (s.error) return void ($("c-state").textContent = s.error);
   $("c-state").textContent = s.problem ? "Not saved: " + s.problem : s.done;
@@ -1003,7 +1041,7 @@ $("r-match").addEventListener("click", async () => {
 $("r-post").addEventListener("click", async () => {
   if (!PENDING || !PENDING.count) return;
   const ask = `Post ${PENDING.count} payments, ${money(PENDING.total)} in all, to Fineract?\n\nEach is posted to the loan the ` +
-              `rules matched and split ${MONEY.ratio} in the ledger. This page cannot undo a posting.`;
+              `rules matched and ${WORDS.ledger_how}. This page cannot undo a posting.`;
   if (!confirm(ask)) return;
   $("r-post").disabled = true;
   logEntry("Post the clear ones", ["posting, then checking the ledger against Fineract…"]);
@@ -1028,6 +1066,7 @@ for (const tab of document.querySelectorAll(".tabs button")) {
 }
 
 $("demo").hidden = !CONFIG.demo;
+showWords(CONFIG.words, CONFIG.co_lending);
 $("pattern").textContent = `${CONFIG.mifos}/#/clients/{clientId}/loans-accounts/{loanId}/transactions`;
 (async () => {
   const s = await call("/api/settings");

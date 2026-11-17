@@ -53,8 +53,8 @@ SETTINGS = [("MIFOSX_BASE_URL", False), ("MIFOSX_TENANT_ID", False), ("MIFOSX_US
             ("MIFOSX_PASSWORD", True), ("MIFOS_URL", False), ("BANK", False), ("ANTHROPIC_API_KEY", True),
             ("AI_MODEL", False), ("AI_QUALITY", False), ("AI_PROVIDER", False), ("AI_BASE_URL", False),
             ("COUNTRY", False), ("CURRENCY", False), ("PARTNER_SHARE_PERCENT", False), ("DATE_ORDER", False),
-            ("NUMBER_FORMAT", False), ("CHANNELS", False)]
-LOCALE_NAMES = ("COUNTRY", "CURRENCY", "PARTNER_SHARE_PERCENT", "DATE_ORDER", "NUMBER_FORMAT", "CHANNELS")
+            ("NUMBER_FORMAT", False), ("CHANNELS", False), ("CO_LENDING", False)]
+LOCALE_NAMES = ("COUNTRY", "CURRENCY", "PARTNER_SHARE_PERCENT", "DATE_ORDER", "NUMBER_FORMAT", "CHANNELS", "CO_LENDING")
 # "AI_API_KEY" is the form's one key box: it is saved under the chosen provider's own name (ai.client.PROVIDERS),
 # so a key typed for one provider is never sent to another.
 KEY_BOX = "AI_API_KEY"
@@ -339,7 +339,17 @@ def settings_view(env: Path) -> dict:
     return {"values": shown,
             "saved": {name: bool(values.get(name)) for name, secret in SETTINGS if secret},
             "banks": BANKS, "env_exists": env.exists(),
-            "ai": ai_view(values), "locale": {**loc.view(settings), "problem": problem}}
+            "ai": ai_view(values),
+            "locale": {**loc.view(settings), "problem": problem, "mode_warning": mode_warning(settings)}}
+
+
+def mode_warning(settings: loc.Settings) -> str:
+    """What changing co-lending to the other choice would leave behind, or '' when the ledger is empty."""
+    rows = len(files.read("ledger.csv"))
+    if not rows:
+        return ""
+    return (f"{rows} payment{' is' if rows == 1 else 's are'} already recorded as {loc.words(settings)['ledger_mode']}; "
+            "this change affects only new payments. Nothing already recorded is rewritten.")
 
 
 def locale_of(values: dict) -> tuple:
@@ -400,6 +410,8 @@ def clean_settings(body: dict, current_provider: str = "") -> dict:
         if name in LOCALE_NAMES:
             if name == "CURRENCY":
                 value = value.upper()
+            elif name == "CO_LENDING":
+                value = value.lower()
             elif name == "NUMBER_FORMAT":
                 value = loc.number_format_of(value)
             elif name == "CHANNELS":
@@ -666,6 +678,7 @@ def run_post(fc, body: dict, env: Path | None = None) -> dict:
     number of payments and the total (in the one currency of the run) that are about to be posted.
     Safe to press twice."""
     settings = loc.with_fineract_digits(env_settings(env), fc)
+    wording = loc.words(settings)
     with WRITING:
         decisions, lines = files.read("decisions.csv"), files.read("bank_statement.csv")
         narrations = {line["txn_id"]: line["narration"] for line in lines}
@@ -696,7 +709,7 @@ def run_post(fc, body: dict, env: Path | None = None) -> dict:
         finally:
             to_ledger.close()
             to_audit.close()
-        log.insert(0, f"Posted {counts['posted']} payments to Fineract and split each {settings.ratio} in the ledger. "
+        log.insert(0, f"Posted {counts['posted']} payments to Fineract and {wording['recorded']}. "
                       f"Already paid, sent to a person: {counts['queued']}. Found already in Fineract and recorded: "
                       f"{counts['recovered']}. Failed: {counts['failed']}.")
         ledger = files.read("ledger.csv")
@@ -705,8 +718,10 @@ def run_post(fc, body: dict, env: Path | None = None) -> dict:
         total = totals(ledger, settings.minor)
         log.append(f"Checked the ledger against Fineract: {len(ledger)} rows, {len(problems)} problems"
                    + (": " + "; ".join(problems[:5]) if problems else ".") +
-                   f" Posted in all ({settings.currency}): {total['amount']:,} (partner {total['partner_share']:,}, lender "
-                   f"{total['lender_share']:,}). Loans in arrears: {arrears} of {len(_schedules())}.")
+                   f" Posted in all ({settings.currency}): {total['amount']:,}"
+                   + (" " + wording["split_detail"].format(partner=f"{total['partner_share']:,}",
+                                                           lender=f"{total['lender_share']:,}")).rstrip() +
+                   f". Loans in arrears: {arrears} of {len(_schedules())}.")
         queue_file.main()  # review.build: the unclear lines, for the Review tab
         log.append(f"Review queue rebuilt: {len(queue_file.read_queue())} lines wait for a person (Review tab).")
     return {"log": log, "posted": counts["posted"], "problems": problems}
@@ -758,6 +773,7 @@ class Handler(BaseHTTPRequestHandler):
             config = {"token": self.server.token, "demo": self.server.demo, "mifos": mifos.rstrip("/"),
                       "money": {"currency": settings.currency, "locale": settings.ui_locale, "ratio": settings.ratio,
                                 "minor": settings.minor},
+                      "words": loc.words(settings), "co_lending": settings.co_lending,
                       "settings": {"MIFOSX_BASE_URL": fc.base_url, "MIFOSX_TENANT_ID": fc.tenant_id,
                                    "MIFOSX_USERNAME": fc.username,
                                    "BANK": ai_client.read_env(env).get("BANK", "hdfc")}}
@@ -773,10 +789,10 @@ class Handler(BaseHTTPRequestHandler):
             self.answer(lambda: check_connection(fc, env_settings(env)))
         elif self.path == "/api/verify":
             self.answer(lambda: verify(fc))
-        elif self.path == "/partner_report.csv":
+        elif self.path == "/" + loc.words(locale_of(ai_client.read_env(env))[0])["report_file"]:  # the report that exists
             try:
-                report.main()  # rebuilt from the ledger each time; it stops if its totals differ from the ledger's
-                self.reply(200, (files.DATA / "partner_report.csv").read_bytes(), "text/csv", "partner_report.csv")
+                name = report.main(locale_of(ai_client.read_env(env))[0])  # rebuilt from the ledger each time; it stops if its totals differ
+                self.reply(200, (files.DATA / name).read_bytes(), "text/csv", name)
             except SystemExit as stop:
                 self.reply(502, str(stop), "text/plain")
         else:
@@ -821,8 +837,22 @@ class Handler(BaseHTTPRequestHandler):
             updates = clean_settings(body, ai_client.read_env(self.server.env).get("AI_PROVIDER", ""))
         except ValueError as problem:
             return {"problem": str(problem), **settings_view(self.server.env)}
+        before = locale_of(ai_client.read_env(self.server.env))[0]
+        after = locale_of({**ai_client.read_env(self.server.env), **{k: v or "" for k, v in updates.items()}})[0]
+        change = before.co_lending != after.co_lending
+        warning = mode_warning(before) if change else ""
+        if warning and body.get("confirm_mode_change") is not True:
+            return {"problem": warning + " Tick the box to confirm the change.", "needs_confirm": True,
+                    **settings_view(self.server.env)}
         merge_env(self.server.env, updates)
         apply_settings(self.server.fc, self.server.env)
+        if change:  # who, when, from -> to; the ledger itself is never touched
+            name = str(body.get("approver") or "").strip() or "(no name given)"
+            to_audit = files.appender("audit.csv", files.AUDIT)
+            to_audit({"at": datetime.now().isoformat(timespec="seconds"), "txn_id": "", "action": "mode_changed",
+                      "loan_ref": "", "reason": f"co-lending changed from {'yes' if before.co_lending else 'no'} "
+                                                f"to {'yes' if after.co_lending else 'no'}", "approver": name})
+            to_audit.close()
         return {"done": "Saved." if updates else "Nothing to change.", **settings_view(self.server.env)}
 
 

@@ -10,6 +10,8 @@ wired in: INR and the rupee sign with lakh grouping, the channels UPI/NEFT/IMPS/
 split and `.`-decimal amounts only. Now each of those is a setting typed on the Connect tab and saved into `.env`, and the
 defaults reproduce the old behaviour exactly.
 
+No-partner mode (CO_LENDING=no) is described in [2026-11-17-no-partner-design.md](2026-11-17-no-partner-design.md).
+
 Stage B (camt.053 and MT940 importers) and stage C (name conventions) are not part of this stage.
 
 ## The settings

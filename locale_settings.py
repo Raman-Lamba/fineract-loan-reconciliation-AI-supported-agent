@@ -1,4 +1,4 @@
-"""Locale settings: currency, partner share, date order, number format and payment channels.
+"""Locale settings: currency, co-lending or not, partner share, date order, number format and payment channels.
 
 They live in .env, are typed on the Connect tab, and default to India, so a project with no such lines
 behaves exactly as it did before they existed. A country preset only fills the boxes in as a starting point
@@ -55,6 +55,7 @@ class Settings:
     channels: tuple = ("UPI", "NEFT", "IMPS", "NACH")
     ui_locale: str = "en-IN"
     digits: int | None = None  # decimal places asked of Fineract; None: the table
+    co_lending: bool = True  # False: no partner bank; partner_share is then 0, so every repayment is all lender's
 
     @property
     def minor(self) -> int:
@@ -108,7 +109,12 @@ def load(values: dict) -> Settings:
     if fmt not in NUMBER_FORMATS:
         raise ValueError(f"NUMBER_FORMAT must be one of {', '.join(NUMBER_FORMATS)}")
     channels = channel_list(given("CHANNELS") or preset["channels"])
-    return Settings(country, currency, share, order, fmt, channels, preset["ui_locale"])
+    colend = given("CO_LENDING").lower() or "yes"
+    if colend not in ("yes", "no"):
+        raise ValueError("CO_LENDING must be yes or no")
+    # No partner is the same split as a 0% share, so the one split() and the ledger columns stay as they are.
+    return Settings(country, currency, share if colend == "yes" else Decimal(0), order, fmt, channels,
+                    preset["ui_locale"], co_lending=colend == "yes")
 
 
 def from_env(path: Path | None) -> Settings:
@@ -141,11 +147,30 @@ def with_fineract_digits(settings: Settings, fc) -> Settings:
     return settings if digits is None else replace(settings, digits=digits)
 
 
+def words(settings: Settings = DEFAULT) -> dict:
+    """Every piece of text that differs between co-lending and a lender with no partner, in one place.
+
+    Server messages, the page and the report read these, so no caller needs its own if.
+    """
+    if settings.co_lending:
+        return {"report_file": "partner_report.csv", "report_name": "partner report", "report_title": "Partner report",
+                "lender_tile": "Lender's share", "recorded": f"split each {settings.ratio} in the ledger",
+                "ledger_how": f"split {settings.ratio} in the ledger", "post_help": f"splits it {settings.ratio} in",
+                "ledger_note": "split by PARTNER_SHARE_PERCENT", "split_detail": "(partner {partner}, lender {lender})",
+                "ledger_mode": f"split {settings.ratio}"}
+    return {"report_file": "repayments_report.csv", "report_name": "repayments report", "report_title": "Repayments report",
+            "lender_tile": "Collected", "recorded": "recorded each in the ledger as the lender's",
+            "ledger_how": "recorded in the ledger as the lender's", "post_help": "records it, all as the lender's, in",
+            "ledger_note": "all the lender's, no partner", "split_detail": "",
+            "ledger_mode": "100% lender (no partner bank)"}
+
+
 def view(settings: Settings) -> dict:
     """The effective values the Connect tab shows, and the presets it fills the boxes from."""
     return {"values": {"COUNTRY": settings.country, "CURRENCY": settings.currency,
                        "PARTNER_SHARE_PERCENT": _plain(settings.partner_share), "DATE_ORDER": settings.date_order,
-                       "NUMBER_FORMAT": settings.number_format, "CHANNELS": ",".join(settings.channels)},
+                       "NUMBER_FORMAT": settings.number_format, "CHANNELS": ",".join(settings.channels),
+                       "CO_LENDING": "yes" if settings.co_lending else "no"},
             "ui_locale": settings.ui_locale, "ratio": settings.ratio, "minor": settings.minor,
-            "presets": PRESETS,
+            "words": words(settings), "presets": PRESETS,
             "date_orders": DATE_ORDERS, "number_formats": NUMBER_FORMATS}

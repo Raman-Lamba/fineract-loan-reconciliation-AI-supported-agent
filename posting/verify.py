@@ -60,8 +60,9 @@ def main():
     print(f"ledger rows checked against Fineract: {len(ledger)}, problems: {len(problems)}")
     print(f"payments posted: {total['payments']}")
     print(f"amount posted ({settings.currency}): {total['amount']:,}")
-    print(f"partner share:   {total['partner_share']:,}")
-    print(f"lender share:    {total['lender_share']:,}")
+    if settings.co_lending:
+        print(f"partner share:   {total['partner_share']:,}")
+        print(f"lender share:    {total['lender_share']:,}")
     print(f"loans in arrears: {arrears} of {len(loans)}")
     if problems:
         sys.exit(1)

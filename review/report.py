@@ -1,4 +1,5 @@
 """The partner bank's report: what each loan repaid each month and how it was split.
+With CO_LENDING=no there is no partner: the same rows without the shares, in data/repayments_report.csv.
 
 Run:  python -m review.report     (reads data/ledger.csv, writes data/partner_report.csv)
 """
@@ -38,27 +39,34 @@ def totals(rows: list[dict], ledger: list[dict], digits: int = 2) -> dict:
     return dict(zip(FIELDS, ["TOTAL", "", mine[0]] + [str(value) for value in mine[1:]]))
 
 
-def main():
-    from locale_settings import from_env
+def main(settings=None) -> str:
+    """Writes the report and returns its file name: partner_report.csv, or repayments_report.csv with no partner."""
+    from locale_settings import from_env, words
     from posting.run import DATA, read
 
-    settings = from_env(DATA.parent / ".env")
+    settings = settings or from_env(DATA.parent / ".env")
     ledger = read("ledger.csv")
     rows = by_loan_month(ledger)
-    total = totals(rows, ledger, settings.minor)
-    out = DATA / "partner_report.csv"
+    total = totals(rows, ledger, settings.minor)  # the partner and lender columns are checked too, even if not written
+    name = words(settings)["report_file"]
+    out = DATA / name
+    # shortcut: a ledger holding rows from before a switch to no partner is reported as plain repayments, whatever
+    # shares those rows carry; change the mode back to read them as a split.
+    fields = FIELDS if settings.co_lending else FIELDS[:4]
     with out.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS)
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows + [total])
-    print(f"partner report: {len(rows)} rows (one per loan per month), {len({r['month'] for r in rows})} months, "
+    print(f"{words(settings)['report_name']}: {len(rows)} rows (one per loan per month), {len({r['month'] for r in rows})} months, "
           f"{len({r['loan_ref'] for r in rows})} loans -> {out}")
     print(f"amounts in {settings.currency}, one currency per run")
     print(f"payments:      {total['payments']}")
     print(f"amount:        {Decimal(total['amount']):,}")
-    print(f"partner share: {Decimal(total['partner_share']):,}")
-    print(f"lender share:  {Decimal(total['lender_share']):,}")
+    if settings.co_lending:
+        print(f"partner share: {Decimal(total['partner_share']):,}")
+        print(f"lender share:  {Decimal(total['lender_share']):,}")
     print("totals equal the ledger's: yes")
+    return name
 
 
 if __name__ == "__main__":

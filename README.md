@@ -14,7 +14,7 @@ All data is synthetic. This is a portfolio project, not a production or regulato
 |---|---|---|
 | **Use it without typing anything** | Double-click **`Start.bat`**, then follow the tabs in the browser: Connect, Statement, Run, Review ([No-code setup](#no-code-setup-startbat)) | Windows 10/11, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **See the page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
-| **Check the code works** | `python -m unittest discover -s tests` (318 tests, about 40 seconds) | Python 3.11+ only |
+| **Check the code works** | `python -m unittest discover -s tests` (347 tests, about 45 seconds) | Python 3.11+ only |
 | **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **Connect it to your own Fineract** | The page's Connect tab, or [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
 | **Use it outside India** | The Connect tab's "Country and money" box: pick a country, check what it fills in, change what is wrong ([Using it outside India](#using-it-outside-india)) | A statement in one currency, in the layout of your bank |
@@ -392,7 +392,8 @@ exactly as before.
 |---|---|---|
 | `COUNTRY` | A preset that fills the boxes below as a starting point. Change any of them afterwards. | India |
 | `CURRENCY` | ISO 4217 code. **Test connection** checks it is enabled in your Fineract and that your loans are in it. Decimals come from Fineract's own setting for the currency where it can be read, else a small built-in table (JPY 0; KWD, BHD, OMR and a few others 3; the rest 2). | INR |
-| `PARTNER_SHARE_PERCENT` | The partner bank's share, 0 to 100, decimals allowed (62.5). The lender gets the amount minus that share, so the two always add up; the partner share is rounded half-up to the currency's minor unit. | 80 |
+| `CO_LENDING` | `yes` or `no`: do you share your loans with a partner bank? `no` is for a lender that does not co-lend ([No partner bank](#no-partner-bank-single-lender)). | yes |
+| `PARTNER_SHARE_PERCENT` | Co-lending only. The partner bank's share, 0 to 100, decimals allowed (62.5). The lender gets the amount minus that share, so the two always add up; the partner share is rounded half-up to the currency's minor unit. | 80 |
 | `DATE_ORDER` | `day-first`, `month-first` or `auto`. With `auto` the whole file decides: a date with a first part above 12 is day-first, a second part above 12 is month-first. If every date could be read both ways, the import is **refused** and you choose on the Statement tab; it never guesses. | day-first (India); `auto` for the other presets |
 | `NUMBER_FORMAT` | `1,234.56`, `1.234,56`, `1 234,56` (space, no-break or narrow no-break space), `1'234.56`, or `auto`. With `auto` the whole amount column decides (a value with both marks shows which is the decimal; a repeated mark is thousands; one mark and 1 or 2 digits is a decimal). If every amount is like `1.234` it could be either, so the import is **refused** and you choose. Indian grouping (`1,23,456.78`) is read for India. `(1,234.56)`, `-1.234,56`, `1,234.56-` and a Cr or Dr suffix are read as signs; credits and debits are told apart as before. | 1,234.56 (India); `auto` for the other presets |
 | `CHANNELS` | Comma-separated payment-type names. A narration containing one as a whole word is posted with the Fineract payment type of that name if there is one, else with none. **Test connection** lists which exist (informational, never a failure). | UPI,NEFT,IMPS,NACH |
@@ -418,6 +419,28 @@ The demo seed (`seed.load_fineract`) stays India-only: it creates INR and the fo
 
 **Not legal or compliance advice.** Co-lending rules and the partner's share differ by country and by agreement; the 80 is an
 illustration. Check yours with whoever is responsible for it. The agent only records the split you tell it to.
+
+## No partner bank (single lender)
+
+A lender that does not co-lend sets **Do you share your loans with a partner bank?** to **No** on the Connect tab (or
+`CO_LENDING=no` in `.env`). Matching, posting, the review queue, the duplicate guard and the audit log work as before; what goes
+away is the split:
+
+- Every repayment is recorded as 100% the lender's. `data\ledger.csv` keeps its columns and its name, so tooling does not
+  break: `partner_share` is `0.00` (or `0` / `0.000` for a currency with no or three decimals) and `lender_share` equals
+  `amount`. `posting.verify` and its sum checks work unchanged. `PARTNER_SHARE_PERCENT` is ignored and its box is hidden.
+- `python -m review.report` writes `data\repayments_report.csv` (`month, loan_ref, payments, amount`, and a `TOTAL` row) instead
+  of `data\partner_report.csv`, and still stops if its totals differ from the ledger's. The Review tab hides the Partner
+  bank's share card, calls the lender's card "Collected", and its download link is the report that exists. The old report file
+  is left alone, not deleted.
+- **Changing the mode later applies to new payments only.** Nothing already in the ledger is rewritten. If the ledger has rows, the
+  Connect tab says so ("N payments are already recorded as split 80:20; this change affects only new payments") and the change
+  is saved only after you tick the confirmation box. The change is written to `data\audit.csv` (`action` `mode_changed`, the
+  Approver name if filled, `co-lending changed from yes to no`). Changing the setting posts nothing.
+- A ledger that mixes both modes is reported by the mode currently set: with no partner, as plain repayments (the report's amounts
+  and totals are still the ledger's); with a partner, with the shares as recorded, `0.00` for the earlier no-partner rows.
+
+The RBI and split notes elsewhere in this README are examples that apply to co-lending only.
 
 ## Matcher
 
@@ -852,7 +875,7 @@ connector is used as it is, not modified.
 and its buy-back. It has no per-loan participation ratio and does not divide repayments. The 80:20
 split ledger is ours to build, outside Fineract.
 
-**RBI (an India example).** The 80:20 default is an illustration, not a rule; co-lending rules and the split percentages differ
+**RBI (an India example, co-lending only).** The 80:20 default is an illustration, not a rule; co-lending rules and the split percentages differ
 by country and by arrangement (see [Using it outside India](#using-it-outside-india)). RBI's Co-Lending Arrangements Directions, 2025
 (in force 1 January 2026) require each lender to keep at least 10% of every loan and the borrower to be
 charged a blended interest rate; the 2020 model they replace required the NBFC to keep at least 20%.
