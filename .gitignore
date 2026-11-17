@@ -4,3 +4,4 @@ vendor/
 data/
 __pycache__/
 *.pyc
+notes/
