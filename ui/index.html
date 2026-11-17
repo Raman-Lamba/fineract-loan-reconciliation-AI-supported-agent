@@ -52,6 +52,15 @@
           max-width:340px; display:block; cursor:pointer; }
   .cand:has(input:checked) { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
   .cand b { display:block; }
+  .sugg { cursor:default; }
+  .sugg.used { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .sugg .facts { display:block; margin:2px 0 6px; }
+  .sugg .match { color:var(--good); font-weight:600; }
+  .sugg .why { display:block; background:var(--bg); border-radius:6px; padding:4px 8px; margin:6px 0; font-size:14px; }
+  .sugg .why b { display:inline; color:var(--warn); }
+  .possible { margin-top:10px; }
+  .possible h3 { font-size:14px; margin:0; }
+  details.possible summary { cursor:pointer; color:var(--accent); }
   .act { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .act input.note { flex:1 1 260px; }
   .box { padding:14px 18px; margin-top:12px; }
@@ -123,6 +132,8 @@
       approves: the matcher's fixed rules decide, and anything unclear still goes to a person. Without a key everything
       works as before (HDFC layout, columns chosen by hand). Use the service you already pay for; each use costs a little
       on that account. A weaker model sends more lines to a person, never a wrong posting.</p>
+    <p>On the Review tab each unclear line also shows possible loans found on this computer, with no AI. With a second
+      tick below, an "Ask AI to rank these" button on each line can have the AI put them in order with a reason.</p>
     <div class="form">
       <label>Which AI service <select name="AI_PROVIDER" id="c-provider"></select>
         <small id="c-pnote"></small></label>
@@ -403,6 +414,7 @@ function renderRow(row) {
                              value: row.candidates.some(c => c.loan_ref === row.loan_ref) ? "" : row.loan_ref});
   const otherRadio = el("input", {type: "radio", name: radio, value: "", checked: !!other.value});
   other.addEventListener("input", () => { otherRadio.checked = true; });
+  let used = {ref: "", origin: ""};  // the suggestion "Use this loan" put in the box, for the audit note
   const cards = row.candidates.map(c => el("label", {class: "cand"},
     el("input", {type: "radio", name: radio, value: c.loan_ref,
                  checked: row.loan_ref ? c.loan_ref === row.loan_ref : row.candidates.length === 1}),
@@ -421,8 +433,63 @@ function renderRow(row) {
     el("span", {class: "reason"}, "Why it is here: " + row.reason),
     el("div", {class: "cands"}, ...cards,
        el("label", {class: "cand"}, otherRadio, row.candidates.length ? " another loan " : " no candidate found; the loan is ", other)),
+    possible(),
     el("div", {class: "act"}, note, approve, reject),
     message);
+
+  // Possible loans from our own similarity check (no AI, nothing sent). "Use this loan" only fills the box.
+  function possible() {
+    if (row.candidates.length && !row.suggestions.length) return null;
+    const cardsBox = el("div", {class: "cands"});
+    const status = el("div", {class: "soft"});
+    const ask = el("button", {class: "ask-ai", hidden: true}, "Ask AI to rank these");
+    const hint = el("span", {class: "soft ask-hint"});
+    const show = (list, ai) => cardsBox.replaceChildren(...list.map(s => suggestionCard(s, ai)));
+    show(row.suggestions, "");
+    ask.addEventListener("click", async () => {
+      ask.disabled = true;
+      status.textContent = "asking the AI about this line…";
+      const r = await call("/api/suggest", {txn_id: row.txn_id});
+      ask.disabled = false;
+      if (r.error || r.problem) return void (status.textContent = r.error || r.problem);
+      show(r.suggestions, r.ai);
+      status.textContent = r.ai ? `Put in order by AI (${r.ai}). It was sent this narration and the names of these ` +
+                                  `${r.suggestions.length} borrowers, nothing else. The facts on each card are our own.` : r.note;
+    });
+    const body = [
+      row.suggestions.length
+        ? el("div", {class: "soft"}, "Possible loans, from comparing the name, amount and date with every loan (on this computer; nothing is sent anywhere). Check before you use one.")
+        : el("div", {class: "soft"}, "No likely loan found: no borrower's name is like this payer's, and no instalment of this amount was due these days."),
+      cardsBox,
+      row.suggestions.length ? el("div", {class: "act"}, ask, hint) : null,
+      status];
+    if (!row.candidates.length) return el("div", {class: "possible"}, el("h3", {}, "Suggestions"), ...body);
+    return el("details", {class: "possible"}, el("summary", {}, `More possibilities (${row.suggestions.length})`), ...body);
+  }
+
+  function suggestionCard(s, ai) {
+    const difference = Number(s.difference);
+    const fact = !s.due ? "no instalment due within a month of the payment"
+      : `${rupees(s.instalment)} due ${s.due}: ` + (s.equal ? "" : `paid ${rupees(Math.abs(difference))} ${difference < 0 ? "less" : "more"}`);
+    const use = el("button", {}, "Use this loan");
+    const card = el("div", {class: "cand sugg" + (used.ref === s.loan_ref ? " used" : "")},
+      el("span", {class: "mono"}, s.loan_ref), " ", el("span", {class: "soft"}, `${s.confidence} likelihood`),
+      el("b", {}, s.borrower),
+      el("span", {}, s.similarity),
+      el("span", {class: "facts"}, fact, s.equal ? el("span", {class: "match"}, "the amount matches") : null),
+      ai && s.ai_reason ? el("span", {class: "why"}, el("b", {}, "AI suggestion, check it: "), s.ai_reason) : null,
+      use, " ",
+      s.loan_id ? el("a", {href: mifosLoan(s, "general"), target: "_blank", rel: "noopener"}, "Open in Mifos") : null);
+    use.addEventListener("click", () => {
+      other.value = s.loan_ref;  // fills the box only: approving is still the person's own click
+      otherRadio.checked = true;
+      used = {ref: s.loan_ref, origin: ai && s.ai_reason ? "ai" : "local"};
+      for (const c of box.querySelectorAll(".sugg")) c.classList.toggle("used", c === card);
+      note.focus();
+    });
+    return card;
+  }
+  updateAskButtons(box);
 
   async function send(decision) {
     const name = approver();
@@ -435,7 +502,8 @@ function renderRow(row) {
                                     : `Reject this ${rupees(row.amount)} line as ${name}? Nothing is posted.`;
     if (!confirm(ask)) return;
     approve.disabled = reject.disabled = true;
-    const result = await call("/api/decide", {txn_id: row.txn_id, decision, loan_ref: loan, approver: name, note: note.value});
+    const origin = decision === "post" && loan === used.ref ? used.origin : "";
+    const result = await call("/api/decide", {txn_id: row.txn_id, decision, loan_ref: loan, approver: name, note: note.value, origin});
     approve.disabled = reject.disabled = false;
     if (result.done) {
       $("log").prepend(el("div", {class: "done"}, `UTR ${row.txn_id}, ${rupees(row.amount)}: ${result.done}` +
@@ -556,13 +624,32 @@ $("c-testai").addEventListener("click", async () => {
     ...(r.error ? [] : [r.detail + (r.fix ? " Fix: " + r.fix : "")]));
 });
 
-// The consent box: shown wherever the AI reader could run, until the person ticks it once (kept in data/).
-function consentBox() {
+// "Ask AI to rank these" only with the AI reader set up and both ticks; otherwise one line on how to turn it on.
+function updateAskButtons(root = document) {
+  const ai = SETTINGS && SETTINGS.ai, on = !!(ai && ai.suggest_ready);
+  for (const button of root.querySelectorAll(".ask-ai")) button.hidden = !on;
+  for (const hint of root.querySelectorAll(".ask-hint")) hint.textContent = on || !ai ? "" : !ai.ready
+    ? "To have an AI put these in order, set up the AI reader on the Connect tab (optional)."
+    : "To have an AI put these in order, tick both consent boxes on the Connect tab (optional).";
+}
+
+// The consent boxes: shown wherever the AI could run, until the person ticks each once (kept in data/).
+// "read" is the statement reader's; "suggest" is the Review tab's Ask AI, which also sends borrowers' names.
+function consentBox(kind = "read") {
   const tick = el("input", {type: "checkbox"});
   const save = el("button", {}, "Save my consent");
-  const box = el("div", {class: "box notice"},
-    el("p", {}, el("b", {}, "Before the AI reader runs. "),
-      (SETTINGS.ai.local ? "Your model runs on this computer, so nothing leaves it. " : "It sends text to " + SETTINGS.ai.label + " (model " + SETTINGS.ai.model + "): ") +
+  const where = SETTINGS.ai.local ? "Your model runs on this computer, so nothing leaves it. "
+                                  : "It sends text to " + SETTINGS.ai.label + " (model " + SETTINGS.ai.model + "): ";
+  const box = kind === "suggest"
+    ? el("div", {class: "box notice"},
+        el("p", {}, el("b", {}, "Before Ask AI on the Review tab. "), where +
+          "only for a line you click Ask AI on: that line's narration, and the loan reference and name of up to 5 " +
+          "borrowers our own similarity check picked. Never amounts, due dates, phone numbers, addresses or balances. " +
+          "The AI only puts them in order with a reason: you still choose and approve. Without this tick the " +
+          "suggestions still work, on this computer only."),
+        el("p", {}, el("label", {}, tick, " " + SETTINGS.ai.suggest_consent_text)), save)
+    : el("div", {class: "box notice"},
+    el("p", {}, el("b", {}, "Before the AI reader runs. "), where +
       "To find the columns, the first 20 rows of your file with every digit " +
       "replaced by 9; to read payers, only the narrations the rules cannot read. Amounts, balances and account numbers " +
       "from other columns are never sent, and neither is anything from .env except the key itself. Narrations can " +
@@ -570,7 +657,7 @@ function consentBox() {
     el("p", {}, el("label", {}, tick, " " + SETTINGS.ai.consent_text)), save);
   save.addEventListener("click", async () => {
     if (!tick.checked) return alert("Tick the box first.");
-    const s = await call("/api/consent", {agree: true});
+    const s = await call("/api/consent", {agree: true, kind});
     if (s.error || s.problem) return alert(s.error || s.problem);
     showSettings(s);
   });
@@ -579,7 +666,9 @@ function consentBox() {
 
 function renderConsent() {
   const need = SETTINGS.ai.ready && !SETTINGS.ai.consent;
-  $("c-consent").replaceChildren(...(need ? [consentBox()] : []));
+  const second = SETTINGS.ai.ready && !SETTINGS.ai.suggest_consent;
+  $("c-consent").replaceChildren(...(need ? [consentBox()] : []), ...(second ? [consentBox("suggest")] : []));
+  updateAskButtons();
   $("st-consent").replaceChildren(...(need ? [consentBox()] : []));
   $("r-consent").replaceChildren(...(need ? [consentBox()] : []));
   $("r-ai-wrap").hidden = !SETTINGS.ai.ready;

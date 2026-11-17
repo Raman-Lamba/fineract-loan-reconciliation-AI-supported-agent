@@ -30,6 +30,7 @@ from pathlib import Path
 import posting.run as files
 from ai import client as ai_client
 from ai import layout as ai_layout
+from ai import rank as ai_rank
 from ai.narration import extract
 from matcher import run as matcher_run
 from matcher.match import FORMATS, payer_name
@@ -39,6 +40,7 @@ from posting.verify import check, read_fineract, totals
 from review import apply as review_apply
 from review import build as queue_file
 from review import report
+from review.suggest import suggest
 from statement.fetch_schedules import fetch, list_loans
 from statement.import_bank import convert, record, recorded_bank
 
@@ -188,21 +190,75 @@ def candidates(text: str, loans: dict) -> list[dict]:
     return out
 
 
+def _shortlist(row: dict, schedules: list[dict]) -> list[dict]:
+    """review.suggest's possible loans for a queue row, leaving out the matcher's own candidates (already shown)."""
+    shown = {item.partition(" ")[0] for item in row["candidates"].split("; ") if item}
+    return suggest(row, schedules, recorded_bank(files.DATA / "bank_statement.csv"), exclude=shown)
+
+
 def state() -> dict:
-    """What the Review tab shows: queue.csv as it is now, and the ledger's totals."""
-    loans = {loan["loan_ref"]: loan for loan in _schedules()}
+    """What the Review tab shows: queue.csv as it is now, with local suggestions, and the ledger's totals."""
+    schedules = _schedules()
+    loans = {loan["loan_ref"]: loan for loan in schedules}
     queue = []
     for row in queue_file.read_queue():
         problem, note = _problem_and_note(row["note"])
-        queue.append({**row, "candidates": candidates(row["candidates"], loans), "problem": problem, "note": note})
+        queue.append({**row, "candidates": candidates(row["candidates"], loans), "problem": problem, "note": note,
+                      "suggestions": _shortlist(row, schedules)})
     summary = {key: value if key == "payments" else str(value) for key, value in totals(files.read("ledger.csv")).items()}
     return {"queue": queue, "summary": {**summary, "queue": len(queue), "loans": len(loans)}}
 
 
-def decide(fc, d: dict) -> dict:
+def ask_ai(env: Path, body: dict, opener=None) -> dict:
+    """The AI's order and reasons for one row's local suggestions, asked only when a person clicks for that row.
+
+    Writes nothing but the AI cache: the queue, its decision column and Fineract are untouched.
+    """
+    row = next((r for r in queue_file.read_queue() if r["txn_id"] == str(body.get("txn_id", ""))), None)
+    if row is None:
+        return {"problem": "this line is no longer in the queue. Reload the page."}
+    shortlist = _shortlist(row, _schedules())
+    out = {"suggestions": shortlist, "ai": "", "note": ""}
+    try:
+        send = ai_client.sender(env, files.DATA, opener, kind="suggest")
+    except ai_client.AIError as problem:
+        return {**out, "note": f"The AI was not asked: {problem}. These are the local suggestions."}
+    ranking, problem = ai_rank.rank(row["narration"], shortlist, send, files.DATA / "ai_suggest_cache.json")
+    if ranking is None:
+        return {**out, "note": f"The AI's answer was not used ({problem}). These are the local suggestions alone."}
+    return {**out, "suggestions": ai_rank.merge(shortlist, ranking), "ai": _ai_label(env)}
+
+
+def _ai_label(env: Path) -> str:
+    cfg = ai_client.config(ai_client.read_env(env))
+    return f"{cfg['provider']}/{cfg['model']}"
+
+
+ORIGIN = re.compile(r"^\[suggested by [^\]]*\] ?")
+
+
+def _origin(env: Path, row: dict, ref: str, origin) -> str:
+    """Where the chosen loan came from, for the audit: only if it holds. The approver is still the person."""
+    shortlist = _shortlist(row, _schedules())
+    if origin not in ("local", "ai") or ref not in {s["loan_ref"] for s in shortlist}:
+        return ""
+    if origin == "ai":
+        try:
+            cfg = ai_client.config(ai_client.read_env(env))
+            ranked = ai_rank.cached(row["narration"], shortlist, ai_client.scope(cfg), files.DATA / "ai_suggest_cache.json")
+        except ai_client.AIError:
+            ranked = None
+        if ranked and ref in {r["loan_ref"] for r in ranked}:
+            return f"[suggested by AI ({_ai_label(env)})]"
+    return "[suggested by local similarity]"  # the AI was not asked, or did not rank it: the idea was the local list's
+
+
+def decide(fc, d: dict, env: Path | None = None) -> dict:
     """One person's decision on one line: written into queue.csv as if typed in Excel, then applied.
 
-    Returns {"done": posted | recovered | rejected | applied earlier} or {"problem": why it was refused}.
+    d["origin"] ("local" or "ai") says the loan was picked from a suggestion; it is written in front of the note,
+    so the audit shows where the idea came from. Returns {"done": posted | recovered | rejected | applied
+    earlier} or {"problem": why it was refused}.
     """
     txn = str(d.get("txn_id", ""))
     with WRITING:
@@ -211,6 +267,9 @@ def decide(fc, d: dict) -> dict:
         if row is None:
             return {"problem": "this line is no longer in the queue: it was decided already. Reload the page."}
         row.update({field: str(d.get(field, "")).strip() for field in queue_file.EDITS})
+        note = ORIGIN.sub("", row["note"])  # a tag from an earlier attempt is replaced, never stacked
+        tag = _origin(env or ROOT / ".env", row, row["loan_ref"].upper(), d.get("origin")) if row["decision"].lower() == "post" else ""
+        row["note"] = " ".join(filter(None, (tag, note)))
         try:
             queue_file.write_queue(queue)
             kept, counts = review_apply.run(fc, ok, only=txn)
@@ -247,9 +306,14 @@ def ai_view(values: dict) -> dict:
         cfg = ai_client.config(values)
     except ai_client.AIError:  # a hand-edited bad AI_PROVIDER: show Claude's setup until it is chosen again
         cfg = ai_client.config({})
+    ready, consent = ai_client.available_for(cfg), ai_client.consent_given(files.DATA, cfg)
+    suggest_consent = ai_client.consent_given(files.DATA, cfg, "suggest")
     return {"provider": cfg["provider"], "model": cfg["model"], "base": cfg["base"], "local": cfg["local"],
-            "key": bool(cfg["key"]), "ready": ai_client.available_for(cfg), "consent": ai_client.consent_given(files.DATA, cfg),
+            "key": bool(cfg["key"]), "ready": ready, "consent": consent,
             "consent_text": ai_client.consent_text(cfg), "label": cfg["label"],
+            # "Ask AI" on the Review tab: only with the reader set up and both ticks
+            "suggest_consent": suggest_consent, "suggest_consent_text": ai_client.consent_text(cfg, "suggest"),
+            "suggest_ready": ready and consent and suggest_consent,
             "providers": {name: {"name": p["name"], "model": p["model"], "models": p["models"], "base": p.get("base", ""),
                                  "verified": p["verified"]} for name, p in ai_client.PROVIDERS.items()}}
 
@@ -315,8 +379,9 @@ def consent(env: Path, body: dict) -> dict:
     """Records the person's tick (in data/, so it holds for every browser). Only the exact box counts."""
     if body.get("agree") is not True:
         return {"problem": "Tick the box first.", **settings_view(env)}
+    kind = "suggest" if body.get("kind") == "suggest" else "read"
     try:
-        ai_client.record_consent(files.DATA, ai_client.config(ai_client.read_env(env)))
+        ai_client.record_consent(files.DATA, ai_client.config(ai_client.read_env(env)), kind)
     except ai_client.AIError as problem:
         return {"problem": str(problem), **settings_view(env)}
     return {"done": "Your consent is saved.", **settings_view(env)}
@@ -645,7 +710,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "this page is out of date: reload it"})
         fc, env, opener = self.server.fc, self.server.env, self.server.opener
         routes = {
-            "/api/decide": lambda body: decide(fc, body),
+            "/api/decide": lambda body: decide(fc, body, env),
+            "/api/suggest": lambda body: ask_ai(env, body, opener),
             "/api/settings": lambda body: self.save_settings(body),
             "/api/consent": lambda body: consent(env, body),
             "/api/testai": lambda body: ai_client.try_it(env, files.DATA, opener),

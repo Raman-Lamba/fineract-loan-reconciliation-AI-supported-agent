@@ -12,7 +12,7 @@ All data is synthetic. This is a portfolio project, not a production or regulato
 |---|---|---|
 | **Use it without typing anything** | Double-click **`Start.bat`**, then follow the tabs in the browser: Connect, Statement, Run, Review ([No-code setup](#no-code-setup-startbat)) | Windows 10/11, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **See the page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
-| **Check the code works** | `python -m unittest discover -s tests` (207 tests, about 35 seconds) | Python 3.11+ only |
+| **Check the code works** | `python -m unittest discover -s tests` (243 tests, about 35 seconds) | Python 3.11+ only |
 | **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **Connect it to your own Fineract** | The page's Connect tab, or [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
 | **Feed it your own bank statement** | The page's Statement tab, or [Use your own bank statement](#use-your-own-bank-statement) | A CSV export: HDFC is found by itself; any other layout by choosing its columns, or by the optional AI reader |
@@ -36,6 +36,7 @@ wrong, 273 queued for a person, ledger and partner report equal to Fineract.
 | 5 | Review queue a person edits in Excel, partner report, end-to-end demo | built |
 | UI | Local review page for the same queue, and a setup guide with a live connection test ([Review page](#review-page)) | built |
 | No-code + AI reader, stage one | Connect, Statement and Run tabs and `Start.bat`, so nobody types a command or edits a file; an optional AI reader (Claude, OpenAI, Gemini or any OpenAI-compatible service, a local one included) for statement layouts and narrations the rules do not know ([No-code setup](#no-code-setup-startbat), [AI statement reader](#ai-statement-reader)) | built; the AI reader tested with fake models only, no live provider call |
+| AI reader, stage two: suggestions | Each unclear line on the Review tab shows up to 5 likely loans found on this computer (no key, nothing sent), with the facts to check them; an optional "Ask AI to rank these" per line, after a second consent ([Suggestions for unclear lines](#suggestions-for-unclear-lines-stage-two)) | built; the AI ranking tested with fake models only |
 
 Connecting it to a Fineract and Mifos of your own: [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos).
 
@@ -174,6 +175,54 @@ not calls):
 
 The ICICI, SBI and Axis test statements in `tests/fixtures/` are hand-made from secondary research notes,
 marked so in their first line, and use invented people; no real statement of those banks has been through it.
+
+### Suggestions for unclear lines (stage two)
+
+Many queued lines are "no loan fits": a relative paid, the name is misspelt, or the rules could not read it.
+The Review tab now shows the person a shortlist of likely loans. **A suggestion never posts, approves or
+changes the queue's decision: "Use this loan" only fills the loan box, and the person still approves.**
+
+- **Local suggestions, no key, nothing sent.** Every queued line with no candidate shows up to 5 loans
+  (`review/suggest.py`, standard library only), ranked by the payer's name against each borrower's (the same
+  surname with another first name counts, since relatives pay; an initial, a name cut short or written as one
+  word, and a misspelling of 4+ letters count too), and by the instalment due nearest the payment. Each card
+  shows the loan_ref, the borrower, a likelihood, how the names compare ("same surname, different first name
+  (a relative?)"), the instalment and its due date, whether the amount matches it or by how much it differs,
+  and a link to the loan in Mifos. These facts are computed in our code. Rows the matcher already has
+  candidates for keep their cards, with a collapsed "More possibilities".
+- **Optional "Ask AI to rank these"**, per line, only when you click it (never in bulk). It sends **that
+  line's narration and the loan_ref and name of up to 5 shortlisted borrowers, nothing else**: no amounts,
+  due dates, phone numbers, addresses or balances. The model puts them in order with one sentence each,
+  marked "AI suggestion, check it". A loan it names that is not on the list is dropped; reasons are plain
+  text, at most 200 characters; a malformed answer or a failed call leaves the local list with a short note.
+  Answers are cached in `data\ai_suggest_cache.json` by provider, model, narration and shortlist. Same
+  services, keys and adapters as the reader.
+- **A separate consent.** The button appears only with the AI reader set up and **both** ticks given. The
+  second tick, on the Connect tab, reads "I understand that, for lines I ask about, the narration and up to 5
+  possible borrowers' names are sent to <provider> (model <model>)" (for a model on this computer: "...
+  which runs on this computer: nothing leaves it"). It is stored under `suggest` in `data\ai_consent.json`;
+  changing provider, or the address of Other, asks again.
+- **Audit.** Approving a loan taken from a suggestion writes `[suggested by local similarity]` or
+  `[suggested by AI (claude/claude-haiku-5-5)]` in front of your note, so the audit log shows
+  `manual: [suggested by ...] your note`. The approver is still you.
+
+**How good the local list is** (`python -m review.measure_suggestions`, 17 Nov 2026, synthetic statement
+only; only this command reads the answer key): of 273 queued lines, 257 have a true loan.
+
+| Case | Lines | True loan first | True loan in the 5 | Lines with any suggestion |
+|---|---|---|---|---|
+| paid by someone else | 50 | 48 (96.0%) | 50 (100%) | 50 |
+| ambiguous (2 loans fit) | 85 | 62 (72.9%) | 85 (100%) | 85 |
+| partial | 69 | 61 (88.4%) | 69 (100%) | 69 |
+| overpaid | 53 | 43 (81.1%) | 53 (100%) | 53 |
+| unrelated (no loan) | 16 | - | - | 0 |
+
+The two "paid by someone else" misses are exact ties between twin loans, shown side by side. The synthetic
+relatives share the borrower's surname and pay the exact instalment on time, which is what the scoring
+rewards, so treat these as an upper bound and measure on your own queued lines. Design:
+[docs/superpowers/specs/2026-11-17-suggestions-design.md](docs/superpowers/specs/2026-11-17-suggestions-design.md).
+Not verified: no live provider call (fakes only). The Review tab was rendered in headless Chrome on a temp copy
+of the synthetic data with a made-up Fineract and a fake model; nobody has clicked through it by hand.
 
 ## Terms
 
@@ -497,7 +546,9 @@ The page's tabs are Connect, Statement, Run, Review and Guide; the first three a
 - **Review tab.** Every line in `data\queue.csv` with its date, amount, narration and the reason it is there.
   The candidate loans sit side by side (borrower, loan_ref, the instalment due and its amount), each with a
   link that opens the loan in Mifos. Choose a candidate or type a loan_ref, add a note, then Approve or
-  Reject. The Approver box at the top is required and is remembered by the browser.
+  Reject. The Approver box at the top is required and is remembered by the browser. A line with no
+  candidate shows likely loans found on this computer, and optionally the AI's order of them
+  ([Suggestions for unclear lines](#suggestions-for-unclear-lines-stage-two)).
 - **It is the CSV workflow, not a second one.** A click writes `decision`, `loan_ref`, `approver` and `note`
   into `data\queue.csv`, exactly as a person would in Excel, then runs `review.apply` on that one row. So the
   duplicate guard, the 80:20 split, the ledger row and the audit row are the same code. Rows other people

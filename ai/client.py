@@ -101,32 +101,58 @@ def config(settings: dict) -> dict:
             "base": base, "key": settings.get(preset["key"], ""), "local": local, "dest": host, "preset": preset}
 
 
-def consent_text(cfg: dict) -> str:
-    """What the person agrees to, naming the provider and model (and saying so when nothing leaves this computer)."""
+def consent_text(cfg: dict, kind: str = "read") -> str:
+    """What the person agrees to, naming the provider and model (and saying so when nothing leaves this computer).
+
+    kind "read": the statement reader (stage one). kind "suggest": asking the AI to rank a line's possible loans,
+    which also sends borrowers' names, so it is a separate tick (ai.rank).
+    """
+    model = cfg["model"] or "none chosen"
+    if kind == "suggest":
+        what = "I understand that, for lines I ask about, the narration and up to 5 possible borrowers' names are sent to "
+        if cfg["local"]:
+            return f"{what}the model {model} at {cfg['base']}, which runs on this computer: nothing leaves it"
+        return f"{what}{cfg['label']} (model {model})"
     if cfg["provider"] == "claude":
         return CONSENT
     if cfg["local"]:
         return (f"I understand narration text, which can include people's names, is sent to the model {cfg['model'] or '(none chosen)'} "
                 f"at {cfg['base']}, which runs on this computer: nothing leaves it")
     return (f"I understand narration text, which can include people's names, is sent to {cfg['label']} "
-            f"(model {cfg['model'] or 'none chosen'})")
+            f"(model {model})")
 
 
-def consent_given(data: Path, cfg: dict | None = None) -> bool:
-    """True if the person agreed to this provider (for "other", this address). A change of either asks again."""
-    cfg = cfg or config({})
+def _saved_consent(data: Path) -> dict:
     try:
         saved = json.loads((data / "ai_consent.json").read_text())
-        provider = saved.get("provider") or ("claude" if saved.get("text") == CONSENT else None)  # a file from before providers
-        return provider == cfg["provider"] and (provider != "other" or saved.get("dest") == cfg["dest"])
-    except (OSError, ValueError, AttributeError):
-        return False
+        return saved if isinstance(saved, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
-def record_consent(data: Path, cfg: dict | None = None):
+def consent_given(data: Path, cfg: dict | None = None, kind: str = "read") -> bool:
+    """True if the person agreed to this provider (for "other", this address). A change of either asks again.
+
+    The reader's consent is the file's top level (as before); the suggestions' is under "suggest".
+    """
     cfg = cfg or config({})
-    (data / "ai_consent.json").write_text(json.dumps({"text": consent_text(cfg), "provider": cfg["provider"], "dest": cfg["dest"],
-                                                      "model": cfg["model"], "at": datetime.now().isoformat(timespec="seconds")}))
+    saved = _saved_consent(data)
+    if kind == "suggest":
+        saved = saved.get("suggest") if isinstance(saved.get("suggest"), dict) else {}
+    provider = saved.get("provider") or ("claude" if kind == "read" and saved.get("text") == CONSENT else None)  # a file from before providers
+    return provider == cfg["provider"] and (provider != "other" or saved.get("dest") == cfg["dest"])
+
+
+def record_consent(data: Path, cfg: dict | None = None, kind: str = "read"):
+    cfg = cfg or config({})
+    entry = {"text": consent_text(cfg, kind), "provider": cfg["provider"], "dest": cfg["dest"], "model": cfg["model"],
+             "at": datetime.now().isoformat(timespec="seconds")}
+    saved = _saved_consent(data)
+    if kind == "suggest":
+        saved["suggest"] = entry
+    else:  # the reader's tick replaces the top level and keeps the other one
+        saved = {**entry, **({"suggest": saved["suggest"]} if "suggest" in saved else {})}
+    (data / "ai_consent.json").write_text(json.dumps(saved))
 
 
 def available(env_file: Path) -> bool:
@@ -141,10 +167,16 @@ def available_for(cfg: dict) -> bool:
     return bool(cfg["key"]) or (cfg["local"] and bool(cfg["model"]))
 
 
-def sender(env_file: Path, data: Path, opener=None):
+def scope(cfg: dict) -> str:
+    """Provider + model (+ address for "other"): what the caches key on, so another model never reuses an answer."""
+    return f"{cfg['provider']}:{cfg['model']}" + (f"@{cfg['base']}" if cfg["provider"] == "other" else "")
+
+
+def sender(env_file: Path, data: Path, opener=None, kind: str = "read"):
     """send(body) -> the model's JSON answer (a dict). Raises AIError without a key or consent.
 
-    send.scope names provider + model (+ address): the caches key on it, so another model never reuses an answer.
+    kind "suggest" (ai.rank) needs the suggestions' consent as well as the reader's.
+    send.scope is scope(cfg).
     """
     cfg = config(read_env(env_file))
     opener = opener or urllib.request.urlopen
@@ -160,8 +192,10 @@ def sender(env_file: Path, data: Path, opener=None):
                       else f"no API key is saved for {cfg['name']} (Connect tab), so the AI reader is off")
     if not consent_given(data, cfg):
         raise AIError("the AI reader needs your consent first: tick the box on the Statement tab")
+    if kind == "suggest" and not consent_given(data, cfg, "suggest"):
+        raise AIError("asking the AI about a line needs your second consent first: tick the box on the Connect tab")
     send = _claude(cfg, opener) if cfg["provider"] == "claude" else _chat(cfg, opener)
-    send.scope = f"{cfg['provider']}:{cfg['model']}" + (f"@{cfg['base']}" if cfg["provider"] == "other" else "")
+    send.scope = scope(cfg)
     return send
 
 
