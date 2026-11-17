@@ -16,6 +16,9 @@ from datetime import date
 WINDOW_DAYS = 5  # a payment counts for an instalment due up to this many days either side
 
 
+# shortcut: amounts compare to 0.01, so in a 3-decimal currency (KWD, BHD, OMR) two amounts 0.001 apart match as
+# one. posting.post still demands the exact instalment amount, so the worst case is a line queued, not a wrong
+# post; compare in the currency's own minor unit when a 3-decimal lender uses this.
 def _paise(amount) -> int:
     return round(float(amount) * 100)
 

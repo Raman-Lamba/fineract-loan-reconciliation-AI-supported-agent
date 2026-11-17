@@ -27,6 +27,7 @@ from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import locale_settings as loc
 import posting.run as files
 from ai import client as ai_client
 from ai import layout as ai_layout
@@ -50,18 +51,27 @@ MAX_BODY = 65536
 # The Connect form's fields: (name in .env, write-only?). Secrets are never sent back, only "saved" or not.
 SETTINGS = [("MIFOSX_BASE_URL", False), ("MIFOSX_TENANT_ID", False), ("MIFOSX_USERNAME", False),
             ("MIFOSX_PASSWORD", True), ("MIFOS_URL", False), ("BANK", False), ("ANTHROPIC_API_KEY", True),
-            ("AI_MODEL", False), ("AI_QUALITY", False), ("AI_PROVIDER", False), ("AI_BASE_URL", False)]
+            ("AI_MODEL", False), ("AI_QUALITY", False), ("AI_PROVIDER", False), ("AI_BASE_URL", False),
+            ("COUNTRY", False), ("CURRENCY", False), ("PARTNER_SHARE_PERCENT", False), ("DATE_ORDER", False),
+            ("NUMBER_FORMAT", False), ("CHANNELS", False)]
+LOCALE_NAMES = ("COUNTRY", "CURRENCY", "PARTNER_SHARE_PERCENT", "DATE_ORDER", "NUMBER_FORMAT", "CHANNELS")
 # "AI_API_KEY" is the form's one key box: it is saved under the chosen provider's own name (ai.client.PROVIDERS),
 # so a key typed for one provider is never sent to another.
 KEY_BOX = "AI_API_KEY"
 BANKS = [bank for bank in FORMATS if bank != "synthetic"]
 
 PAGE = Path(__file__).with_name("index.html")
-CHANNELS = ("UPI", "NEFT", "IMPS", "NACH")  # the payment type names posting.post.channel looks for
+DEMO_CHANNELS = ("UPI", "NEFT", "IMPS", "NACH")  # the made-up Fineract's payment types (the demo is India's)
 WRITING = threading.Lock()  # one decision at a time: each reads and rewrites queue.csv
 NOT_RUN = "Not run: fix the failed check above first."
 
-CHECKS = [
+
+def checks(settings: loc.Settings) -> list:
+    """The connection checks, each (name, how to fix it). Two of them are named after the currency and channels set."""
+    preset = loc.PRESETS.get(settings.country, {})
+    name = preset.get("currency_name", "") if preset.get("currency") == settings.currency else ""
+    channels = ", ".join(settings.channels)
+    return [
     ("Fineract answers at the URL",
      "On the Connect tab, set the Fineract API address (MIFOSX_BASE_URL) to your Fineract's, ending in "
      "/fineract-provider/api/v1, press Save, and make sure Fineract is running (the sandbox: Start.bat). For an "
@@ -72,20 +82,21 @@ CHECKS = [
     ("The login works",
      "On the Connect tab, check the user name and password (MIFOSX_USERNAME, MIFOSX_PASSWORD) and press Save: the "
      "same pair must log in on the Mifos login page."),
-    ("INR is an enabled currency",
-     "In Mifos open Admin > Organization > Currency Configuration and add Indian Rupee (INR). If Fineract "
+    (f"{settings.currency} is an enabled currency",
+     "In Mifos open Admin > Organization > Currency Configuration and add " + (f"{name} ({settings.currency})" if name else settings.currency) +
+     ", or change CURRENCY on the Connect tab to the currency your loans are in. If Fineract "
      "refused the read instead (error 403), give this user the READ_CURRENCY permission."),
-    ("Payment types UPI, NEFT, IMPS, NACH exist",
-     "In Mifos open Admin > Organization > Payment Types and add the missing ones, named exactly UPI, NEFT, "
-     "IMPS and NACH. Without one, repayments on that channel are still posted, but with no payment type. If "
-     "Fineract refused the read instead (error 403), give this user the READ_PAYMENTTYPE permission."),
+    (f"Payment types {channels} exist" if channels else "Payment types",
+     "Only if Fineract refused the read (error 403): give this user the READ_PAYMENTTYPE permission. A channel with no "
+     "payment type of that name is not an error: its repayments are posted with no payment type. To have one, "
+     "open Admin > Organization > Payment Types in Mifos and add it, named like the channel."),
     ("Loans exist",
      "The agent never creates loans: it reconciles the ones already in Fineract. Give this user the READ_LOAN "
      "permission and access to the office that holds the loans. On the sandbox, run .\\start.ps1 -Seed."),
     ("A loan's schedule can be read",
      "Give this user the READ_LOAN permission. A loan with no instalments cannot be matched: the matcher "
      "needs the repayment schedule Fineract shows on the loan's Repayment Schedule tab."),
-]
+    ]
 
 
 def ok(response, what: str):
@@ -98,16 +109,17 @@ def ok(response, what: str):
     return response
 
 
-def check_connection(fc) -> list[dict]:
+def check_connection(fc, settings: loc.Settings = loc.DEFAULT) -> list[dict]:
     """The Setup tab's checks of the Fineract named in .env, each with a plain-English fix if it fails.
 
     Read-only: one login call, then GETs. Nothing is created or changed in Fineract.
     """
-    results = []
+    results, CHECKS = [], checks(settings)
 
-    def add(passed, detail):
-        name, fix = CHECKS[len(results)]
-        results.append({"check": name, "ok": passed, "detail": str(detail), "fix": fix if passed is False else ""})
+    def add(passed, detail, fix=None):
+        name, default_fix = CHECKS[len(results)]
+        results.append({"check": name, "ok": passed, "detail": str(detail),
+                        "fix": (fix or default_fix) if passed is False else ""})
 
     def attempt(read):
         try:
@@ -133,13 +145,26 @@ def check_connection(fc) -> list[dict]:
         return results
 
     def currency():
-        enabled = [c["code"] for c in ok(fc.execute_get("currencies"), "Read currencies")["selectedCurrencyOptions"]]
-        return "INR" in enabled, f"Enabled: {', '.join(enabled) or 'none'}."
+        options = ok(fc.execute_get("currencies"), "Read currencies")["selectedCurrencyOptions"]
+        enabled = [c["code"] for c in options]
+        found = next((c for c in options if c["code"] == settings.currency), {})
+        places = found.get("decimalPlaces", found.get("digitsAfterDecimal"))  # unverified key names, see locale_settings
+        table = loc.MINOR_UNITS.get(settings.currency, 2)
+        detail = f"Enabled: {', '.join(enabled) or 'none'}."
+        if places is not None and int(places) != table:
+            detail += (f" Fineract keeps {places} decimals for {settings.currency}; posting uses that, but the "
+                       f"statement import assumes {table} (the built-in table).")
+        return settings.currency in enabled, detail
 
     def payment_types():
-        names = {p["name"] for p in ok(fc.execute_get("paymenttypes"), "Read payment types")}
-        missing = [name for name in CHANNELS if name not in names]
-        return not missing, f"Missing: {', '.join(missing)}." if missing else "All four found."
+        # Informational: a channel with no payment type just posts with none, so this never fails on its own.
+        names = {p["name"].upper() for p in ok(fc.execute_get("paymenttypes"), "Read payment types")}
+        found = [name for name in settings.channels if name in names]
+        missing = [name for name in settings.channels if name not in names]
+        if not settings.channels:
+            return True, "No channels are set: repayments are posted with no payment type."
+        return True, (f"Found as payment types: {', '.join(found) or 'none'}. Not found: {', '.join(missing) or 'none'}"
+                      + (" (not an error: those repayments are posted with no payment type)." if missing else "."))
 
     loans = []
 
@@ -147,11 +172,24 @@ def check_connection(fc) -> list[dict]:
         loans.extend(list_loans(fc, ok))
         with_ref = sum(bool(loan.get("externalId")) for loan in loans)
         rest = len(loans) - with_ref
-        return bool(loans), (f"{len(loans)} loans; {with_ref} of {len(loans)} have an externalId (the loan_ref)."
-                             + (f" The other {rest} will be known by their account number." if rest else ""))
+        detail = (f"{len(loans)} loans; {with_ref} of {len(loans)} have an externalId (the loan_ref)."
+                  + (f" The other {rest} will be known by their account number." if rest else ""))
+        other = sorted({(loan.get("currency") or {}).get("code") for loan in loans} - {None, settings.currency})
+        if other:
+            count = sum((loan.get("currency") or {}).get("code") in other for loan in loans)
+            return False, (f"{count} of the {len(loans)} loans are in {', '.join(other)}, but CURRENCY is {settings.currency}. "
+                           f"One run handles one currency and nothing is converted. {detail}"), (
+                f"Run one currency at a time: set CURRENCY on the Connect tab to the loans' currency ({', '.join(other)}), "
+                f"and import only a statement in that currency.")
+        return bool(loans), detail
 
     def schedule():
         loan = ok(fc.execute_get(f"loans/{loans[0]['id']}", {"associations": "repaymentSchedule"}), "Read a loan")
+        code = (loan.get("currency") or {}).get("code")
+        if code and code != settings.currency:
+            return False, (f"Loan {loan.get('accountNo')} is in {code}, but CURRENCY is {settings.currency}. One run handles "
+                           f"one currency and nothing is converted."), (
+                f"Set CURRENCY on the Connect tab to {code} (and import only a statement in {code}), or check the loans.")
         periods = [p for p in loan.get("repaymentSchedule", {}).get("periods", []) if p.get("period")]
         return bool(periods), f"Loan {loan.get('accountNo')} ({loan.get('clientName')}): {len(periods)} instalments."
 
@@ -272,7 +310,7 @@ def decide(fc, d: dict, env: Path | None = None) -> dict:
         row["note"] = " ".join(filter(None, (tag, note)))
         try:
             queue_file.write_queue(queue)
-            kept, counts = review_apply.run(fc, ok, only=txn)
+            kept, counts = review_apply.run(fc, ok, only=txn, settings=env_settings(env))
         except PermissionError:
             return {"problem": "queue.csv is open in another program (Excel?). Close it there and try again."}
         except SystemExit as stop:
@@ -295,10 +333,26 @@ def verify(fc) -> dict:
 def settings_view(env: Path) -> dict:
     """What the Connect tab may show: plain values, and for a password or key only whether one is saved."""
     values = ai_client.read_env(env)
-    return {"values": {name: values.get(name, "") for name, secret in SETTINGS if not secret},
+    settings, problem = locale_of(values)
+    shown = {name: values.get(name, "") for name, secret in SETTINGS if not secret}
+    shown.update(loc.view(settings)["values"])  # the effective values: a preset's fill-ins show as what they are
+    return {"values": shown,
             "saved": {name: bool(values.get(name)) for name, secret in SETTINGS if secret},
             "banks": BANKS, "env_exists": env.exists(),
-            "ai": ai_view(values)}
+            "ai": ai_view(values), "locale": {**loc.view(settings), "problem": problem}}
+
+
+def locale_of(values: dict) -> tuple:
+    """(the locale settings in these .env values, '') or (the India defaults, why the saved ones are unusable)."""
+    try:
+        return loc.load(values), ""
+    except ValueError as problem:
+        return loc.DEFAULT, f"The saved locale settings are not usable ({problem}); the page shows the India defaults until you save new ones."
+
+
+def env_settings(env: Path | None) -> loc.Settings:
+    """The locale settings in this .env (India's defaults for None). A bad saved value raises ValueError, plainly."""
+    return loc.DEFAULT if env is None else loc.from_env(env)
 
 
 def ai_view(values: dict) -> dict:
@@ -343,6 +397,13 @@ def clean_settings(body: dict, current_provider: str = "") -> dict:
             raise ValueError(f"{name} must start with http:// or https://")
         if name == "BANK" and value and value not in BANKS:
             raise ValueError(f"BANK must be one of {', '.join(BANKS)}")
+        if name in LOCALE_NAMES:
+            if name == "CURRENCY":
+                value = value.upper()
+            elif name == "NUMBER_FORMAT":
+                value = loc.number_format_of(value)
+            elif name == "CHANNELS":
+                value = ",".join(loc.channel_list(value))
         if name == "AI_MODEL" and value:
             if provider == "claude" and not re.fullmatch(r"claude-[a-z0-9.-]+", value):
                 raise ValueError("AI_MODEL must be a Claude model id such as claude-haiku-5-5")
@@ -355,6 +416,13 @@ def clean_settings(body: dict, current_provider: str = "") -> dict:
         if name in ("ANTHROPIC_API_KEY", KEY_BOX) and re.search(r"\s", value):
             raise ValueError("the API key has a space in it: paste it again")
         out[key_name if name == KEY_BOX else name] = value
+    # The locale boxes are checked together, as loc.load reads them; an empty box means "the country's preset".
+    given_locale = {name: value for name, value in out.items() if name in LOCALE_NAMES and value}
+    if given_locale:
+        loc.load(given_locale)
+    for name in LOCALE_NAMES:
+        if name in out and not out[name]:
+            out[name] = None
     for name in body.get("forget") or []:
         if names.get(name):  # only a password or a key can be forgotten from the form
             out[key_name if name == KEY_BOX else name] = None
@@ -422,28 +490,28 @@ def _export() -> str:
     return path.read_text(encoding="utf-8-sig") if path.exists() else ""
 
 
-def _lines(cmap: dict, text: str) -> tuple[list[dict], dict, bool]:
+def _lines(cmap: dict, text: str, settings: loc.Settings = loc.DEFAULT) -> tuple[list[dict], dict, bool]:
     """(statement lines, counts, through the HDFC path?) for this map, or ValueError with the row number.
 
     The HDFC layout, unchanged, goes through import_bank's own HDFC path exactly as the command line does.
     """
     hdfc = ai_layout.hdfc_map(ai_layout.rows_of(text))
     if hdfc and all(cmap.get(field) == value for field, value in hdfc.items()):
-        lines, counts = convert(io.StringIO(text, newline=""), "hdfc")
+        lines, counts = convert(io.StringIO(text, newline=""), "hdfc", settings=settings)
         return lines, counts, True
     try:
-        _, lines, counts = ai_layout.check(cmap, text)
+        _, lines, counts = ai_layout.check(cmap, text, settings)
     except ai_layout.LayoutError as problem:
         raise ValueError(str(problem)) from None
     return lines, counts, False
 
 
-def preview(cmap: dict | None, text: str) -> dict:
+def preview(cmap: dict | None, text: str, settings: loc.Settings = loc.DEFAULT) -> dict:
     """The counts and the first imported lines for a map, or the importer's refusal in plain words."""
     if not isinstance(cmap, dict) or not cmap:
         return {}
     try:
-        lines, counts, _ = _lines(cmap, text)
+        lines, counts, _ = _lines(cmap, text, settings)
     except ValueError as problem:
         return {"problem": str(problem)}
     if not lines:
@@ -456,6 +524,7 @@ def read_statement(env: Path, use_ai: bool, opener=None) -> dict:
     text = _export()
     if not text:
         return {"problem": "Choose your bank statement file first (step 1)."}
+    settings = env_settings(env)
     rows = ai_layout.rows_of(text)
     layouts = files.DATA / "layouts.json"
     out = {"rows": rows[:60], "map": ai_layout.hdfc_map(rows), "source": "hdfc", "note": ""}
@@ -464,7 +533,7 @@ def read_statement(env: Path, use_ai: bool, opener=None) -> dict:
     if out["map"] is None and use_ai:
         try:
             raw = ai_layout.ask(rows, ai_client.sender(env, files.DATA, opener, task="layout"))
-            out.update(map=ai_layout.check(raw, text)[0], source="ai")
+            out.update(map=ai_layout.check(raw, text, settings)[0], source="ai")
         except ai_client.AIError as problem:
             out.update(source=None, note=f"The AI reader did not run: {problem}.")
         except ai_layout.LayoutError as problem:
@@ -475,7 +544,7 @@ def read_statement(env: Path, use_ai: bool, opener=None) -> dict:
                                       "columns below, starting with the row that holds the column names" +
                                       ("." if use_ai else ", or save a Claude API key (or set up another AI service) on the Connect tab to have "
                                                           "them read for you."))
-    return {**out, **preview(out["map"], text)}
+    return {**out, **preview(out["map"], text, settings)}
 
 
 def import_statement(env: Path, body: dict) -> dict:
@@ -486,8 +555,9 @@ def import_statement(env: Path, body: dict) -> dict:
     text = _export()
     if not text or not isinstance(cmap, dict):
         return {"problem": "Choose your bank statement file and read it first."}
+    settings = env_settings(env)
     try:
-        lines, counts, hdfc = _lines(cmap, text)
+        lines, counts, hdfc = _lines(cmap, text, settings)
     except ValueError as problem:
         return {"problem": f"Nothing was imported. {problem}"}
     if not lines:
@@ -498,7 +568,7 @@ def import_statement(env: Path, body: dict) -> dict:
         writer.writeheader()
         writer.writerows(lines)
     if not hdfc:
-        ai_layout.save(ai_layout.check(cmap, text)[0], files.DATA / "layouts.json")
+        ai_layout.save(ai_layout.check(cmap, text, settings)[0], files.DATA / "layouts.json")
     merge_env(env, {"BANK": bank})
     record(out, bank)  # which bank's narrations this statement holds, for the Run tab
     return {"done": counts, "bank": bank}
@@ -591,9 +661,11 @@ def run_match(env: Path, body: dict, opener=None) -> dict:
     return {"log": log, "match": result}
 
 
-def run_post(fc, body: dict) -> dict:
+def run_post(fc, body: dict, env: Path | None = None) -> dict:
     """posting.run + posting.verify + review.build from the page, only after the person confirmed the
-    number of payments and the rupee total that are about to be posted. Safe to press twice."""
+    number of payments and the total (in the one currency of the run) that are about to be posted.
+    Safe to press twice."""
+    settings = loc.with_fineract_digits(env_settings(env), fc)
     with WRITING:
         decisions, lines = files.read("decisions.csv"), files.read("bank_statement.csv")
         narrations = {line["txn_id"]: line["narration"] for line in lines}
@@ -614,7 +686,7 @@ def run_post(fc, body: dict) -> dict:
         counts = dict.fromkeys(("posted", "recovered", "queued", "failed"), 0)
         log, to_ledger, to_audit = [], files.appender("ledger.csv", files.LEDGER), files.appender("audit.csv", files.AUDIT)
         try:
-            for audit, ledger in post_all(decisions, narrations, loan_ids, fc, payment_types, skip):
+            for audit, ledger in post_all(decisions, narrations, loan_ids, fc, payment_types, skip, settings=settings):
                 if ledger:
                     to_ledger(ledger)
                 to_audit({"at": datetime.now().isoformat(timespec="seconds"), **audit})
@@ -624,17 +696,17 @@ def run_post(fc, body: dict) -> dict:
         finally:
             to_ledger.close()
             to_audit.close()
-        log.insert(0, f"Posted {counts['posted']} payments to Fineract and split each 80:20 in the ledger. "
+        log.insert(0, f"Posted {counts['posted']} payments to Fineract and split each {settings.ratio} in the ledger. "
                       f"Already paid, sent to a person: {counts['queued']}. Found already in Fineract and recorded: "
                       f"{counts['recovered']}. Failed: {counts['failed']}.")
         ledger = files.read("ledger.csv")
         in_fineract, arrears = read_fineract(_schedules(), fc, ok)
         problems = check(ledger, in_fineract)
-        total = totals(ledger)
+        total = totals(ledger, settings.minor)
         log.append(f"Checked the ledger against Fineract: {len(ledger)} rows, {len(problems)} problems"
                    + (": " + "; ".join(problems[:5]) if problems else ".") +
-                   f" Rupees posted in all: {total['amount']:,.2f} (partner {total['partner_share']:,.2f}, lender "
-                   f"{total['lender_share']:,.2f}). Loans in arrears: {arrears} of {len(_schedules())}.")
+                   f" Posted in all ({settings.currency}): {total['amount']:,} (partner {total['partner_share']:,}, lender "
+                   f"{total['lender_share']:,}). Loans in arrears: {arrears} of {len(_schedules())}.")
         queue_file.main()  # review.build: the unclear lines, for the Review tab
         log.append(f"Review queue rebuilt: {len(queue_file.read_queue())} lines wait for a person (Review tab).")
     return {"log": log, "posted": counts["posted"], "problems": problems}
@@ -682,7 +754,10 @@ class Handler(BaseHTTPRequestHandler):
         fc, env = self.server.fc, self.server.env
         if self.path == "/":
             mifos = ai_client.read_env(env).get("MIFOS_URL") or (fc.base_url or "").split("/fineract-provider")[0]
+            settings = locale_of(ai_client.read_env(env))[0]
             config = {"token": self.server.token, "demo": self.server.demo, "mifos": mifos.rstrip("/"),
+                      "money": {"currency": settings.currency, "locale": settings.ui_locale, "ratio": settings.ratio,
+                                "minor": settings.minor},
                       "settings": {"MIFOSX_BASE_URL": fc.base_url, "MIFOSX_TENANT_ID": fc.tenant_id,
                                    "MIFOSX_USERNAME": fc.username,
                                    "BANK": ai_client.read_env(env).get("BANK", "hdfc")}}
@@ -695,7 +770,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/run":
             self.answer(lambda: run_state(env))
         elif self.path == "/api/check":
-            self.answer(lambda: check_connection(fc))
+            self.answer(lambda: check_connection(fc, env_settings(env)))
         elif self.path == "/api/verify":
             self.answer(lambda: verify(fc))
         elif self.path == "/partner_report.csv":
@@ -721,11 +796,11 @@ class Handler(BaseHTTPRequestHandler):
             "/api/testai": lambda body: ai_client.try_it(env, files.DATA, opener),
             "/api/upload": upload,
             "/api/read": lambda body: read_statement(env, bool(body.get("ai")), opener),
-            "/api/preview": lambda body: preview(body.get("map"), _export()),
+            "/api/preview": lambda body: preview(body.get("map"), _export(), env_settings(env)),
             "/api/import": lambda body: import_statement(env, body),
             "/api/loans": lambda body: read_loans(fc),
             "/api/match": lambda body: run_match(env, body, opener),
-            "/api/post": lambda body: run_post(fc, body),
+            "/api/post": lambda body: run_post(fc, body, env),
         }
         if self.path not in routes:
             return self.reply(404, {"error": "not found"})
@@ -770,7 +845,7 @@ class DemoFineract:
 
     def execute_get(self, endpoint: str, params=None):
         if endpoint == "paymenttypes":
-            return [{"id": n, "name": name} for n, name in enumerate(CHANNELS, 1)]
+            return [{"id": n, "name": name} for n, name in enumerate(DEMO_CHANNELS, 1)]
         if endpoint == "currencies":
             return {"selectedCurrencyOptions": [{"code": "INR"}]}
         summaries = [{"id": loan["loan_id"], "externalId": loan["loan_ref"], "accountNo": loan["account_no"],

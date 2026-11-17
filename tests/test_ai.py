@@ -90,7 +90,7 @@ class LayoutCheckTest(unittest.TestCase):
 
     def test_a_date_that_does_not_parse_is_refused_with_its_row(self):
         self.assertRefused({**MAPS["sbi_style.csv"], "date_format": "%d/%m/%Y"}, "sbi_style.csv", "row 8:", "date")
-        self.assertRefused({**MAPS["sbi_style.csv"], "date_format": "%m/%d/%Y"}, "sbi_style.csv", "date format")
+        self.assertRefused({**MAPS["sbi_style.csv"], "date_format": "%d/%m/%Y %H"}, "sbi_style.csv", "date format")
 
     def test_an_amount_that_does_not_parse_is_refused_with_its_row(self):
         self.assertRefused({**MAPS["sbi_style.csv"], "credit": 1}, "sbi_style.csv", "row 8:", "amount", "5 Sep 2026")

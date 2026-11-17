@@ -18,13 +18,11 @@ import re
 from pathlib import Path
 
 from ai.client import request
+from locale_settings import DEFAULT, Settings
 from statement.import_bank import LAYOUTS, STYLES, _norm, convert
+from statement.parse import DATE_FORMATS  # whether a numeric one is day-first is the DATE_ORDER setting's call, not the model's
 
 SAMPLE = 20  # rows sent to the model
-# Day first only: Indian banks write dd/mm. shortcut: a month-first export is refused; add its format
-# here if one turns up (and expect the dd/mm vs mm/dd check to need the whole file, not 20 rows).
-DATE_FORMATS = ("%d/%m/%y", "%d/%m/%Y", "%d-%m-%y", "%d-%m-%Y", "%d.%m.%Y", "%d %b %Y", "%d-%b-%Y", "%d %b %y",
-                "%d-%b-%y", "%d/%b/%Y", "%Y-%m-%d")
 FIELDS = {"date": "date", "narration": "narration (description)", "reference": "reference",
           "credit": "credit (deposit)", "debit": "debit (withdrawal)", "amount": "amount", "type": "Dr/Cr"}
 USES = {"two_columns": ("credit", "debit"), "type_column": ("amount", "type"), "suffix": ("amount",),
@@ -77,7 +75,7 @@ def ask(rows: list[list[str]], send) -> dict:
     return send(request(SYSTEM, prompt, SCHEMA, max_tokens=4000))
 
 
-def check(raw, text: str) -> tuple[dict, list[dict], dict]:
+def check(raw, text: str, settings: Settings = DEFAULT) -> tuple[dict, list[dict], dict]:
     """(column map, statement lines, counts) if `raw` fits the whole file, else LayoutError.
 
     Every index must be a column of the header row, the date format one we know, and every date and amount
@@ -106,7 +104,7 @@ def check(raw, text: str) -> tuple[dict, list[dict], dict]:
     if len(used) != len(set(used)):
         raise LayoutError("one column is given for two different things")
     try:
-        lines, counts = convert(io.StringIO(text, newline=""), cmap=cmap)
+        lines, counts = convert(io.StringIO(text, newline=""), cmap=cmap, settings=settings)
     except ValueError as problem:
         raise LayoutError(str(problem)) from None
     if not lines:

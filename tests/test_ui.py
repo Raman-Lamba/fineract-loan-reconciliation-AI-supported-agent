@@ -115,10 +115,12 @@ class CheckTest(DemoData):
         self.assertFails(results, "INR is an enabled currency", "Indian Rupee")
         self.assertIs(results["Loans exist"]["ok"], True)  # the later checks still run
 
-    def test_a_missing_payment_type_is_named(self):
+    def test_a_missing_payment_type_is_named_but_is_not_a_failure(self):
         results = self.check(paymenttypes=[{"id": 1, "name": "UPI"}, {"id": 2, "name": "NEFT"}, {"id": 3, "name": "IMPS"}])
-        self.assertFails(results, "Payment types UPI, NEFT, IMPS, NACH exist", "NACH")
-        self.assertIn("NACH", results["Payment types UPI, NEFT, IMPS, NACH exist"]["detail"])
+        check = results["Payment types UPI, NEFT, IMPS, NACH exist"]
+        self.assertIs(check["ok"], True)  # informational since the locale settings: a channel with no type posts with none
+        self.assertIn("Not found: NACH", check["detail"])
+        self.assertIn("Found as payment types: UPI, NEFT, IMPS", check["detail"])
 
     def test_a_check_the_user_may_not_read(self):
         results = self.check(paymenttypes={"error": "Error 403: Forbidden", "status_code": 403})
@@ -226,7 +228,7 @@ class ServerTest(DemoData):
         with mock.patch.object(review_apply, "run", return_value=([], {"posted": 1})) as run:
             status, result = self.decide()
         self.assertEqual((status, result), (200, {"done": "posted"}))
-        run.assert_called_once_with(self.fc, serve.ok, only=TXN)
+        run.assert_called_once_with(self.fc, serve.ok, only=TXN, settings=mock.ANY)
         row = queue_file.read_queue()[0]  # as a person would have left it in Excel
         self.assertEqual((row["txn_id"], row["decision"], row["loan_ref"], row["approver"], row["note"]),
                          (TXN, "post", "L9002", "Asha", "called him"))

@@ -180,6 +180,36 @@
         <small>Whose narrations the statement has. "other": a bank with no rules yet; names then come only from the AI reader.</small></label>
     </div>
   </div>
+  <h2>Country and money</h2>
+  <div class="box">
+    <p>Where your lender is. The country only fills the other boxes in as a <b>starting point</b>: its details are not
+      verified against any real bank or Fineract, so check each one and change what is wrong. One currency per run:
+      nothing is converted.</p>
+    <div class="form">
+      <label>Country <select name="COUNTRY" id="c-country"></select>
+        <small>Fills the boxes below. "Other": type everything yourself.</small></label>
+      <label>Currency (ISO code) <input name="CURRENCY" id="c-currency" maxlength="3" placeholder="INR" autocomplete="off">
+        <small>Three letters, such as INR, EUR, USD. Must be enabled in Fineract (Test connection checks).</small></label>
+      <label>Partner bank's share (%) <input name="PARTNER_SHARE_PERCENT" id="c-share" inputmode="decimal" placeholder="80">
+        <small>0 to 100; decimals such as 62.5 are fine. The lender keeps the rest. Check your co-lending agreement.</small></label>
+      <label>Date order <select name="DATE_ORDER" id="c-date-order">
+          <option value="auto">auto: work it out from the whole file</option>
+          <option value="day-first">day first (31/12/2026)</option>
+          <option value="month-first">month first (12/31/2026)</option></select>
+        <small>For dates like 05/09/2026. Auto refuses a file where every date could be read both ways.</small></label>
+      <label>Number format <select name="NUMBER_FORMAT" id="c-number-format">
+          <option value="auto">auto: work it out from the whole amount column</option>
+          <option value="1,234.56">1,234.56</option>
+          <option value="1.234,56">1.234,56</option>
+          <option value="1 234,56">1 234,56 (space)</option>
+          <option value="1'234.56">1'234.56</option></select>
+        <small>How the bank writes amounts. Auto refuses a column where every amount looks like 1.234.</small></label>
+      <label>Payment channels <input name="CHANNELS" id="c-channels" placeholder="UPI,NEFT,IMPS,NACH" autocomplete="off">
+        <small>Comma-separated names. A repayment whose narration holds one of them as a word is posted with the Fineract payment type of that name, if there is one.</small></label>
+    </div>
+    <p id="c-locale-problem" class="problem" hidden></p>
+  </div>
+
   <h2>AI statement reader (optional)</h2>
   <div class="box">
     <p>With an AI service the page can read a bank statement in any layout: it proposes which column is which, and reads
@@ -235,6 +265,13 @@
   <h2>2. Read it</h2>
   <div class="box">
     <p><label>Which bank is this? <select id="st-bank"></select></label></p>
+    <p><label>Date order <select id="st-date-order">
+        <option value="auto">auto</option><option value="day-first">day first (31/12/2026)</option>
+        <option value="month-first">month first (12/31/2026)</option></select></label>
+      <label>Number format <select id="st-number-format">
+        <option value="auto">auto</option><option value="1,234.56">1,234.56</option><option value="1.234,56">1.234,56</option>
+        <option value="1 234,56">1 234,56 (space)</option><option value="1'234.56">1'234.56</option></select></label>
+      <span class="soft">Saved on the Connect tab too. If the file does not say, the import stops and asks you to choose here.</span></p>
     <div id="st-consent"></div>
     <p><button id="st-read">Read my statement</button> <span id="st-readstate" class="soft"></span></p>
     <div id="st-note"></div>
@@ -274,7 +311,7 @@
     <p id="r-pending" class="soft">Press Match first.</p>
     <p><button class="approve" id="r-post" disabled>Post the clear ones</button></p>
     <p class="soft">Posts each clear line to its loan in Fineract (the bank's UTR as the repayment's External Id, so it can never
-      be posted twice), splits it 80:20 in <code>data\ledger.csv</code>, checks the ledger against Fineract, and rebuilds
+      be posted twice), splits it <span class="ratio">by your partner share</span> in <code>data\ledger.csv</code>, checks the ledger against Fineract, and rebuilds
       the Review tab's queue. Safe to press again: what is already posted is skipped.</p>
   </div>
   <h2>What happened</h2>
@@ -284,7 +321,7 @@
 <section id="review">
   <div class="strip">
     <div class="tile"><small>Payments posted</small><b id="s-payments">…</b></div>
-    <div class="tile"><small>Rupees posted</small><b id="s-amount">…</b></div>
+    <div class="tile"><small>Amount posted</small><b id="s-amount">…</b></div>
     <div class="tile"><small>Partner bank's share</small><b id="s-partner">…</b></div>
     <div class="tile"><small>Lender's share</small><b id="s-lender">…</b></div>
     <div class="tile"><small>Waiting for a person</small><b id="s-queue">…</b></div>
@@ -320,7 +357,7 @@
      ├──── repayment, externalId = UTR ◀── clear lines (automatic)
      ├──── repayment, externalId = UTR ◀── unclear lines, after a person approves here
      │                                             │
-  Mifos web app (shows the same loans)       data\ledger.csv (80:20 split), data\audit.csv,
+  Mifos web app (shows the same loans)       data\ledger.csv (split by PARTNER_SHARE_PERCENT), data\audit.csv,
   staff see each repayment on the loan       data\queue.csv, data\partner_report.csv</pre>
     <ol>
       <li><b>Make a Fineract user for the agent.</b> Do not use the admin account. In Mifos: Admin &gt; System &gt;
@@ -330,8 +367,8 @@
           <tr><th>Permission</th><th>Why the agent needs it</th></tr>
           <tr><td><code>READ_LOAN</code></td><td>List loans, read schedules and transactions, find a repayment by its external id</td></tr>
           <tr><td><code>REPAYMENT_LOAN</code></td><td>Post a repayment. This is the only thing it writes.</td></tr>
-          <tr><td><code>READ_PAYMENTTYPE</code></td><td>Look up the UPI / NEFT / IMPS / NACH payment types</td></tr>
-          <tr><td><code>READ_CURRENCY</code></td><td>Only for the INR check on this tab</td></tr>
+          <tr><td><code>READ_PAYMENTTYPE</code></td><td>Look up the payment types named in the Channels box (UPI / NEFT / IMPS / NACH for India)</td></tr>
+          <tr><td><code>READ_CURRENCY</code></td><td>Only for the currency check on this tab</td></tr>
           <tr><td><code>READ_CLIENT</code></td><td>Only for <code>start.ps1</code>'s start-up check, which lists one client</td></tr>
         </table>
         <span class="soft">These five codes are in Fineract's own permission list (<code>GET /permissions</code> on the sandbox,
@@ -347,6 +384,7 @@
           <tr><td><code>MIFOSX_TENANT_ID</code></td><td>The Fineract tenant</td><td><code>default</code></td></tr>
           <tr><td><code>MIFOSX_USERNAME</code></td><td>The agent's Fineract user</td><td><code>mifos</code> (the sandbox admin)</td></tr>
           <tr><td><code>MIFOSX_PASSWORD</code></td><td>Its password. Never shown on this page or in its log.</td><td>written by <code>start.ps1</code></td></tr>
+          <tr><td><code>COUNTRY</code>, <code>CURRENCY</code>, <code>PARTNER_SHARE_PERCENT</code>, <code>DATE_ORDER</code>, <code>NUMBER_FORMAT</code>, <code>CHANNELS</code></td><td>Where your lender is. The country is a starting point that fills the other boxes; change any of them. See "Using it outside India" in the README. Preset details are unverified.</td><td>India, INR, 80, day-first, 1,234.56, UPI,NEFT,IMPS,NACH</td></tr>
           <tr><td><code>BANK</code></td><td>Whose narrations your bank statement has: <code>hdfc</code>, <code>icici</code>, <code>sbi</code>,
             or <code>other</code> (names then come only from the AI reader)</td><td><code>hdfc</code></td></tr>
           <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Optional. Turns on the AI statement reader. Never shown on this page or in its log.</td><td>not set</td></tr>
@@ -381,9 +419,9 @@
         amount equals an instalment exactly and its date is within 5 days of the due date.</td></tr>
       <tr><td>The loan's <b>account number</b></td><td>A narration containing <code>SCPL</code> + the 9-digit account number names the loan directly.
         This prefix is the synthetic lender's; a different one needs a one-line change in <code>matcher/match.py</code>.</td></tr>
-      <tr><td><b>Payment types</b> named UPI, NEFT, IMPS, NACH</td><td>The channel found in the narration is posted as the payment type. A missing type
+      <tr><td><b>Payment types</b> named like the Channels box (UPI, NEFT, IMPS, NACH for India)</td><td>The channel found in the narration is posted as the payment type. A missing type
         does not stop the posting; the repayment just has none.</td></tr>
-      <tr><td><b>INR</b> as an enabled currency</td><td>Amounts are rupees with two decimals. Loans in another currency are not supported.</td></tr>
+      <tr><td>The <b>currency</b> in the Currency box (INR for India) enabled</td><td>One currency per run: the loans, the statement and the ledger are all in it, with its own number of decimals. Loans or statement lines in another currency are refused, never converted.</td></tr>
       <tr><td>Repayment <b>External Id</b></td><td>The agent posts each repayment with the bank's UTR as the transaction's External Id (and as the
         receipt number). Fineract keeps that unique, so the same bank line can never be posted twice, even from a second machine.</td></tr>
     </table>
@@ -438,7 +476,22 @@
 <script>
 const CONFIG = __CONFIG__;
 const $ = id => document.getElementById(id);
-const rupees = text => "₹" + Number(text).toLocaleString("en-IN", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+// Money is shown with the browser's own currency formatting for the locale and currency set on the Connect tab.
+// A browser that does not know the locale or currency gets the ISO code and a plain number instead.
+let MONEY = CONFIG.money, FORMATTER = null;
+function money(text) {
+  const value = Number(text);
+  try {
+    FORMATTER = FORMATTER || new Intl.NumberFormat(MONEY.locale, {style: "currency", currency: MONEY.currency});
+    return FORMATTER.format(value);
+  } catch (error) {
+    return MONEY.currency + " " + value.toFixed(MONEY.minor);
+  }
+}
+function count(number) {
+  try { return number.toLocaleString(MONEY.locale); } catch (error) { return String(number); }
+}
+function showRatio() { for (const node of document.querySelectorAll(".ratio")) node.textContent = MONEY.ratio; }
 
 // Bank narrations and names are other people's text: always set as text, never as HTML.
 function el(tag, attrs = {}, ...children) {
@@ -483,14 +536,14 @@ function renderRow(row) {
                  checked: row.loan_ref ? c.loan_ref === row.loan_ref : row.candidates.length === 1}),
     " ", el("span", {class: "mono"}, c.loan_ref),
     el("b", {}, c.borrower),
-    el("span", {}, `${rupees(c.amount)} due ${c.due}`), el("br"),
+    el("span", {}, `${money(c.amount)} due ${c.due}`), el("br"),
     c.loan_id ? el("a", {href: mifosLoan(c, "general"), target: "_blank", rel: "noopener"}, "Open in Mifos") : null));
   const note = el("input", {type: "text", class: "note", "aria-label": "Note for the audit log", placeholder: "note: why (goes in the audit log)", value: row.note});
   const message = el("div", {class: "problem", hidden: !row.problem}, row.problem ? "Refused: " + row.problem : "");
   const approve = el("button", {class: "approve"}, "Approve and post");
   const reject = el("button", {class: "reject"}, "Reject");
   const box = el("div", {class: "row"},
-    el("div", {class: "top"}, el("span", {class: "amount"}, rupees(row.amount)), el("span", {}, row.date),
+    el("div", {class: "top"}, el("span", {class: "amount"}, money(row.amount)), el("span", {}, row.date),
        el("span", {class: "soft mono"}, "UTR " + row.txn_id)),
     el("div", {class: "narration mono"}, row.narration),
     el("span", {class: "reason"}, "Why it is here: " + row.reason),
@@ -533,7 +586,7 @@ function renderRow(row) {
   function suggestionCard(s, ai) {
     const difference = Number(s.difference);
     const fact = !s.due ? "no instalment due within a month of the payment"
-      : `${rupees(s.instalment)} due ${s.due}: ` + (s.equal ? "" : `paid ${rupees(Math.abs(difference))} ${difference < 0 ? "less" : "more"}`);
+      : `${money(s.instalment)} due ${s.due}: ` + (s.equal ? "" : `paid ${money(Math.abs(difference))} ${difference < 0 ? "less" : "more"}`);
     const use = el("button", {class: "small"}, "Use this loan");
     const card = el("div", {class: "cand sugg" + (used.ref === s.loan_ref ? " used" : "")},
       el("span", {class: "mono"}, s.loan_ref), " ", el("span", {class: "soft"}, `${s.confidence} likelihood`),
@@ -561,15 +614,15 @@ function renderRow(row) {
     const picked = box.querySelector(`input[name="${radio}"]:checked`);
     const loan = decision === "post" ? (picked ? picked.value || other.value.trim() : "") : "";
     if (decision === "post" && !loan) return fail("Choose a loan, or type its loan_ref, before approving.");
-    const ask = decision === "post" ? `Post ${rupees(row.amount)} to ${loan} as ${name}?`
-                                    : `Reject this ${rupees(row.amount)} line as ${name}? Nothing is posted.`;
+    const ask = decision === "post" ? `Post ${money(row.amount)} to ${loan} as ${name}?`
+                                    : `Reject this ${money(row.amount)} line as ${name}? Nothing is posted.`;
     if (!confirm(ask)) return;
     approve.disabled = reject.disabled = true;
     const origin = decision === "post" && loan === used.ref ? used.origin : "";
     const result = await call("/api/decide", {txn_id: row.txn_id, decision, loan_ref: loan, approver: name, note: note.value, origin});
     approve.disabled = reject.disabled = false;
     if (result.done) {
-      $("log").prepend(el("div", {class: "done"}, `UTR ${row.txn_id}, ${rupees(row.amount)}: ${result.done}` +
+      $("log").prepend(el("div", {class: "done"}, `UTR ${row.txn_id}, ${money(row.amount)}: ${result.done}` +
                                                   (decision === "post" ? ` to ${loan}` : "") + ` by ${name}.`));
       return load();
     }
@@ -592,10 +645,10 @@ async function load() {
   const state = await call("/api/state");
   if (state.error) return $("queue").replaceChildren(el("div", {class: "problem"}, state.error));
   const s = state.summary;
-  $("s-payments").textContent = s.payments.toLocaleString("en-IN");
-  $("s-amount").textContent = rupees(s.amount);
-  $("s-partner").textContent = rupees(s.partner_share);
-  $("s-lender").textContent = rupees(s.lender_share);
+  $("s-payments").textContent = count(s.payments);
+  $("s-amount").textContent = money(s.amount);
+  $("s-partner").textContent = money(s.partner_share);
+  $("s-lender").textContent = money(s.lender_share);
   $("s-queue").textContent = s.queue;
   $("queue").replaceChildren(...(state.queue.length ? state.queue.map(renderRow) : [emptyQueue()]));
 }
@@ -632,6 +685,14 @@ let SETTINGS = null;
 
 function showSettings(s) {
   SETTINGS = s;
+  MONEY = {currency: s.values.CURRENCY, locale: s.locale.ui_locale, ratio: s.locale.ratio, minor: s.locale.minor};
+  FORMATTER = null;
+  showRatio();
+  $("c-country").replaceChildren(...Object.keys(s.locale.presets).map(name => el("option", {value: name}, name)));
+  $("c-locale-problem").hidden = !s.locale.problem;
+  $("c-locale-problem").textContent = s.locale.problem;
+  $("st-date-order").value = s.values.DATE_ORDER;
+  $("st-number-format").value = s.values.NUMBER_FORMAT;
   for (const input of $("connect").querySelectorAll("input[name], select[name]")) {
     if (input.type === "password") input.value = "";  // a saved secret is never sent to the page
     else if (input.name in s.values) input.value = s.values[input.name];
@@ -666,6 +727,15 @@ async function saveSettings(forget) {
   if (!s.problem) showSettings(s);
 }
 $("c-save").addEventListener("click", () => saveSettings());
+
+// A country only fills the boxes in; the person edits them afterwards.
+$("c-country").addEventListener("change", () => {
+  const preset = SETTINGS.locale.presets[$("c-country").value];
+  $("c-currency").value = preset.currency;
+  $("c-date-order").value = preset.date_order;
+  $("c-number-format").value = preset.number_format;
+  $("c-channels").value = preset.channels;
+});
 $("c-forget").addEventListener("click", () => saveSettings(["AI_API_KEY"]));
 
 // The AI boxes follow the provider choice. A key saved for one provider is kept apart from the others'.
@@ -761,7 +831,9 @@ function renderConsent() {
 // ---- Statement -------------------------------------------------------------------------------------
 const STYLES = {two_columns: "a Debit column and a Credit column", type_column: "one Amount column and a Dr/Cr column",
                 suffix: "one Amount column ending in Dr or Cr", signed: "one Amount column, debits negative"};
-const DATES = {"%d/%m/%y": "05/09/26", "%d/%m/%Y": "05/09/2026", "%d-%m-%y": "05-09-26", "%d-%m-%Y": "05-09-2026",
+const DATES = {"%m/%d/%Y": "09/05/2026 (month first)", "%m/%d/%y": "09/05/26 (month first)", "%m-%d-%Y": "09-05-2026 (month first)",
+               "%Y/%m/%d": "2026/09/05", "%d.%m.%y": "05.09.26", "%d %B %Y": "05 September 2026", "%d-%B-%Y": "05-September-2026",
+               "%b %d, %Y": "Sep 05, 2026", "%B %d, %Y": "September 05, 2026", "%d/%m/%y": "05/09/26", "%d/%m/%Y": "05/09/2026", "%d-%m-%y": "05-09-26", "%d-%m-%Y": "05-09-2026",
                "%d.%m.%Y": "05.09.2026", "%d %b %Y": "05 Sep 2026", "%d-%b-%Y": "05-Sep-2026", "%d %b %y": "05 Sep 26",
                "%d-%b-%y": "05-Sep-26", "%d/%b/%Y": "05/Sep/2026", "%Y-%m-%d": "2026-09-05"};
 const ROLES = {date: "date", narration: "narration", reference: "reference", credit: "credit", debit: "debit",
@@ -815,7 +887,8 @@ function renderMap(check) {
                .filter((_, i) => rows[i].some(Boolean)),
            value => { MAP.header_row = Number(value); refresh(); }),
     column("date", "the transaction date"),
-    picker("Dates look like", MAP.date_format, Object.entries(DATES), set("date_format")),
+    picker("Dates look like", MAP.date_format, Object.entries(DATES), set("date_format"),
+           "Whether 05/09 means 5 September or 9 May follows the Date order setting above, not this choice."),
     column("narration", "the description or remarks"),
     column("reference", "cheque / reference number, if any"),
     picker("Amounts are written as", MAP.style, Object.entries(STYLES), set("style")),
@@ -840,6 +913,14 @@ function renderMap(check) {
 }
 
 const noRef = c => c.no_reference ? ` ${c.no_reference.length} credits have no reference and will be reviewed by a person (rows ${c.no_reference.join(", ")}).` : "";
+
+for (const [id, name] of [["st-date-order", "DATE_ORDER"], ["st-number-format", "NUMBER_FORMAT"]]) {
+  $(id).addEventListener("change", async () => {
+    const s = await call("/api/settings", {values: {[name]: $(id).value}});
+    $("st-readstate").textContent = s.error || s.problem || "Saved. Press Read my statement again.";
+    if (!s.error && !s.problem) { showSettings(s); if (MAP) refresh(); }
+  });
+}
 
 let previewing = 0;
 async function refresh() {
@@ -878,12 +959,12 @@ function showMatch(m) {
   $("r-summary").replaceChildren(
     el("p", {}, el("b", {}, `${m.counts.post} would post, ${m.counts.queue} go to a person, ${m.counts.ignore} ignored`),
        ` of ${m.lines} lines. Nothing has been posted by Match.`),
-    el("table", {}, el("tr", {}, el("th", {}, "Outcome"), el("th", {}, "Why"), el("th", {class: "num"}, "Lines"), el("th", {class: "num"}, "Rupees")),
+    el("table", {}, el("tr", {}, el("th", {}, "Outcome"), el("th", {}, "Why"), el("th", {class: "num"}, "Lines"), el("th", {class: "num"}, "Amount")),
       ...m.reasons.map(r => el("tr", {}, el("td", {}, words[r.outcome]), el("td", {}, r.reason),
-                                el("td", {class: "num"}, r.lines), el("td", {class: "num"}, rupees(r.amount))))));
+                                el("td", {class: "num"}, r.lines), el("td", {class: "num"}, money(r.amount))))));
   PENDING = m.pending;
   $("r-pending").textContent = m.pending.count
-    ? `${m.pending.count} payments, ${rupees(m.pending.total)} in all, are ready to post.` +
+    ? `${m.pending.count} payments, ${money(m.pending.total)} in all, are ready to post.` +
       (m.done_before ? ` ${m.done_before} more are already in the ledger and will be skipped.` : "")
     : `Nothing to post: ${m.done_before ? "all " + m.done_before + " clear payments are already in the ledger" : "no line is clear"}.`;
   $("r-post").disabled = !m.pending.count;
@@ -921,8 +1002,8 @@ $("r-match").addEventListener("click", async () => {
 
 $("r-post").addEventListener("click", async () => {
   if (!PENDING || !PENDING.count) return;
-  const ask = `Post ${PENDING.count} payments, ${rupees(PENDING.total)} in all, to Fineract?\n\nEach is posted to the loan the ` +
-              `rules matched and split 80:20 in the ledger. This page cannot undo a posting.`;
+  const ask = `Post ${PENDING.count} payments, ${money(PENDING.total)} in all, to Fineract?\n\nEach is posted to the loan the ` +
+              `rules matched and split ${MONEY.ratio} in the ledger. This page cannot undo a posting.`;
   if (!confirm(ask)) return;
   $("r-post").disabled = true;
   logEntry("Post the clear ones", ["posting, then checking the ledger against Fineract…"]);

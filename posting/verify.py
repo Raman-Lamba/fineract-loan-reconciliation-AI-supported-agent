@@ -36,16 +36,19 @@ def read_fineract(loans: list[dict], fc, ok) -> tuple[dict, int]:
     return in_fineract, arrears
 
 
-def totals(ledger: list[dict]) -> dict:
-    """Payments posted and the rupees: in all, the partner's share and the lender's."""
-    return {"payments": len(ledger), **{column: sum((Decimal(row[column]) for row in ledger), Decimal("0.00"))
+def totals(ledger: list[dict], digits: int = 2) -> dict:
+    """Payments posted and the money: in all, the partner's share and the lender's."""
+    zero = Decimal(0).quantize(Decimal(1).scaleb(-digits))
+    return {"payments": len(ledger), **{column: sum((Decimal(row[column]) for row in ledger), zero)
                                         for column in ("amount", "partner_share", "lender_share")}}
 
 
 def main():
     from posting.run import DATA, read  # here, not at the top: check() must import without the connector
+    from locale_settings import from_env
     from seed.connector import fineract_client as fc, ok
 
+    settings = from_env(DATA.parent / ".env")
     ledger = read("ledger.csv")
     loans = json.loads((DATA / "schedules.json").read_text())
     in_fineract, arrears = read_fineract(loans, fc, ok)
@@ -53,12 +56,12 @@ def main():
     problems = check(ledger, in_fineract)
     for problem in problems:
         print(f"PROBLEM {problem}")
-    total = totals(ledger)
+    total = totals(ledger, settings.minor)
     print(f"ledger rows checked against Fineract: {len(ledger)}, problems: {len(problems)}")
     print(f"payments posted: {total['payments']}")
-    print(f"rupees posted:   {total['amount']:,.2f}")
-    print(f"partner share:   {total['partner_share']:,.2f}")
-    print(f"lender share:    {total['lender_share']:,.2f}")
+    print(f"amount posted ({settings.currency}): {total['amount']:,}")
+    print(f"partner share:   {total['partner_share']:,}")
+    print(f"lender share:    {total['lender_share']:,}")
     print(f"loans in arrears: {arrears} of {len(loans)}")
     if problems:
         sys.exit(1)

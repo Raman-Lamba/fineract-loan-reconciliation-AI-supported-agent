@@ -9,24 +9,31 @@ import re
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
+from locale_settings import DEFAULT, Settings
 from matcher.match import WINDOW_DAYS
 
-PARTNER_SHARE = Decimal("0.80")  # the partner bank's part of every repayment; the lender keeps the rest
 APPROVER = "auto (matcher rules)"
 FMT = {"locale": "en", "dateFormat": "yyyy-MM-dd"}
 
 
-def split(amount: str) -> tuple[Decimal, Decimal]:
-    """(partner share, lender share). The lender gets the remainder, so the two always add up."""
+def split(amount: str, settings: Settings = DEFAULT) -> tuple[Decimal, Decimal]:
+    """(partner share, lender share). The lender gets the remainder, so the two always add up.
+
+    The partner's part is rounded half up to the currency's minor unit.
+    """
     total = Decimal(amount)
-    partner = (total * PARTNER_SHARE).quantize(Decimal("0.01"), ROUND_HALF_UP)
+    partner = (total * settings.partner_share / 100).quantize(Decimal(1).scaleb(-settings.minor), ROUND_HALF_UP)
     return partner, total - partner
 
 
-def channel(narration: str) -> str:
-    """UPI, NEFT, IMPS or NACH: the first of these words in the narration (a payment type's name), or ''."""
-    found = re.search(r"\b(UPI|NEFT|IMPS|NACH)\b", narration.upper())
-    return found.group(1) if found else ""
+def channel(narration: str, channels: tuple = DEFAULT.channels) -> str:
+    """The first configured channel (a payment type's name) that stands as a whole word in the narration, or ''."""
+    if not channels:
+        return ""
+    # Longest first, so SEPA INSTANT is found before SEPA; a space in a name matches any run of spaces.
+    names = "|".join(r"\s+".join(map(re.escape, name.split())) for name in sorted(channels, key=len, reverse=True))
+    found = re.search(rf"\b({names})\b", narration.upper())
+    return " ".join(found.group(1).split()) if found else ""
 
 
 def _recover(d: dict, loan_id: int, fc) -> tuple:
@@ -38,7 +45,8 @@ def _recover(d: dict, loan_id: int, fc) -> tuple:
     return "recovered", f"{d['reason']}; already in Fineract from an earlier run", txn["id"]
 
 
-def process(d: dict, narration: str, loan_id: int, fc, payment_types: dict, manual: bool = False) -> tuple:
+def process(d: dict, narration: str, loan_id: int, fc, payment_types: dict, manual: bool = False,
+            settings: Settings = DEFAULT) -> tuple:
     """One `post` decision -> (action, reason, Fineract transaction id or None).
 
     `manual`: a person approved this line for this loan, so the amount need not fit an instalment.
@@ -64,7 +72,8 @@ def process(d: dict, narration: str, loan_id: int, fc, payment_types: dict, manu
 
     body = {"transactionDate": d["date"], "transactionAmount": d["amount"], "externalId": d["txn_id"],
             "receiptNumber": d["txn_id"], "note": d["reason"], **FMT}
-    payment_type = payment_types.get(channel(narration))
+    wanted = channel(narration, settings.channels)
+    payment_type = next((pid for name, pid in payment_types.items() if name.upper() == wanted), None) if wanted else None
     if payment_type:
         body["paymentTypeId"] = payment_type
     posted = fc.execute_post(f"loans/{loan_id}/transactions?command=repayment", body)
@@ -83,7 +92,7 @@ def handled(ledger: list[dict], audit: list[dict]) -> set:
 
 
 def post_all(decisions, narrations: dict, loan_ids: dict, fc, payment_types: dict, skip: set,
-             approver: str = APPROVER):
+             approver: str = APPROVER, settings: Settings = DEFAULT):
     """Yields (audit row, ledger row or None) for each attempt. A txn_id in `skip` is not touched.
 
     `approver` is the person who decided the line in the review queue; left out, the matcher's rules did.
@@ -92,10 +101,10 @@ def post_all(decisions, narrations: dict, loan_ids: dict, fc, payment_types: dic
         if d["outcome"] != "post" or d["txn_id"] in skip:
             continue
         action, reason, fineract_txn_id = process(d, narrations[d["txn_id"]], loan_ids[d["loan_ref"]], fc,
-                                                  payment_types, manual=approver != APPROVER)
+                                                  payment_types, manual=approver != APPROVER, settings=settings)
         ledger = None
         if fineract_txn_id is not None:
-            partner, lender = split(d["amount"])
+            partner, lender = split(d["amount"], settings)
             ledger = {"txn_id": d["txn_id"], "date": d["date"], "loan_ref": d["loan_ref"],
                       "fineract_txn_id": fineract_txn_id, "amount": d["amount"],
                       "partner_share": str(partner), "lender_share": str(lender)}

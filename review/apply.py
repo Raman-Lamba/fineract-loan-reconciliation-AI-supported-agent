@@ -4,6 +4,7 @@ Run:  python -m review.apply     (reads data/queue.csv; posts to Fineract; appen
 
 Safe to re-run: an applied line leaves the queue, and a txn_id in the ledger is never posted again.
 """
+from locale_settings import DEFAULT, Settings
 from matcher.match import NO_REFERENCE
 from posting.post import post_all
 
@@ -11,7 +12,7 @@ PROBLEM = "PROBLEM: "
 
 
 def apply(queue: list[dict], lines: dict, loan_ids: dict, fc, payment_types: dict, ledger_ids: set,
-          rejected_ids: set):
+          rejected_ids: set, settings: Settings = DEFAULT):
     """Yields (the row if it stays in the queue, audit row or None, ledger row or None) per queue row.
 
     `lines` maps txn_id to its statement line: the date and amount posted come from the bank, never from
@@ -46,18 +47,21 @@ def apply(queue: list[dict], lines: dict, loan_ids: dict, fc, payment_types: dic
             d = {"txn_id": txn, "date": lines[txn]["date"], "amount": lines[txn]["amount"], "outcome": "post",
                  "loan_ref": ref, "reason": why}
             (audit, ledger), = post_all([d], {txn: lines[txn]["narration"]}, loan_ids, fc, payment_types, set(),
-                                        approver)
+                                        approver, settings)
             if not ledger:
                 problem = audit["reason"]
         yield ({**row, "note": f"{PROBLEM}{problem} | {note}"} if problem else None), audit, ledger
 
 
-def run(fc, ok, only: str | None = None) -> tuple[list[dict], dict]:
+def run(fc, ok, only: str | None = None, settings: Settings = DEFAULT) -> tuple[list[dict], dict]:
     """Applies the decided rows of queue.csv and writes the ledger, the audit log and the queue.
 
     `only`: apply just the row with this txn_id (the review page decides one line at a time) and leave
     the others exactly as they are. Returns (the rows still in the queue, how many rows ended how).
+    `settings`: the locale settings (partner share, channels); the currency's decimal places are asked of Fineract.
     """
+    from locale_settings import with_fineract_digits
+    settings = with_fineract_digits(settings, fc)
     import json
     from datetime import datetime
 
@@ -80,7 +84,7 @@ def run(fc, ok, only: str | None = None) -> tuple[list[dict], dict]:
         if only not in (None, row["txn_id"]):
             kept.append(row)
             continue
-        (keep, audit, ledger), = apply([row], lines, loan_ids, fc, payment_types, ledger_ids, rejected_ids)
+        (keep, audit, ledger), = apply([row], lines, loan_ids, fc, payment_types, ledger_ids, rejected_ids, settings)
         if ledger:
             to_ledger(ledger)
         if audit:
@@ -101,9 +105,12 @@ def run(fc, ok, only: str | None = None) -> tuple[list[dict], dict]:
 
 
 def main():
+    from pathlib import Path
+
+    from locale_settings import from_env
     from seed.connector import fineract_client as fc, ok
 
-    run(fc, ok)
+    run(fc, ok, settings=from_env(Path(__file__).resolve().parents[1] / ".env"))
 
 
 if __name__ == "__main__":

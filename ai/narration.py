@@ -19,6 +19,7 @@ from pathlib import Path
 from ai.client import AIError, request
 
 BATCH = 40
+# shortcut: the India channels only, and nothing uses the answer yet; make it follow CHANNELS when something does.
 CHANNELS = ("UPI", "NEFT", "IMPS", "NACH")
 TEXT_FIELDS = ("payer_name", "reference", "loan_account")
 # shortcut: reference and channel are checked and cached but nothing uses them yet (txn_id stays the file's

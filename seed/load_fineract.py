@@ -18,6 +18,7 @@ from seed.generate import generate
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
           "November", "December"]
 FMT = {"locale": "en", "dateFormat": "dd MMMM yyyy"}
+# DEMO ONLY, and India-only: the sandbox seed. A real lender sets its currency and CHANNELS on the Connect tab instead.
 PAYMENT_TYPES = ["UPI", "NEFT", "IMPS", "NACH", "CASH"]
 
 # Same shape as the sandbox bootstrap's product (known to be accepted by this

@@ -12,6 +12,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from locale_settings import from_env, with_fineract_digits
 from posting.post import handled, post_all
 
 DATA = Path(__file__).resolve().parents[1] / "data"
@@ -50,7 +51,9 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, help="only the first N `post` decisions: a quick trial")
+    parser.add_argument("--env", type=Path, default=DATA.parent / ".env", help="the .env holding the locale settings")
     args = parser.parse_args()
+    settings = with_fineract_digits(from_env(args.env), fc)
 
     decisions = [d for d in read("decisions.csv") if d["outcome"] == "post"][: args.limit]
     narrations = {line["txn_id"]: line["narration"] for line in read("bank_statement.csv")}
@@ -60,7 +63,7 @@ def main():
 
     to_ledger, to_audit = appender("ledger.csv", LEDGER), appender("audit.csv", AUDIT)
     counts = dict.fromkeys(("posted", "recovered", "queued", "failed"), 0)
-    for audit, ledger in post_all(decisions, narrations, loan_ids, fc, payment_types, skip):
+    for audit, ledger in post_all(decisions, narrations, loan_ids, fc, payment_types, skip, settings=settings):
         if ledger:
             to_ledger(ledger)
         to_audit({"at": datetime.now().isoformat(timespec="seconds"), **audit})

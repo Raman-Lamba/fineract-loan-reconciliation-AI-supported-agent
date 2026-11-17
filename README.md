@@ -1,9 +1,11 @@
-# Reconciliation agent for a co-lending loan book
+﻿# Reconciliation agent for a co-lending loan book
 
 An agent that matches incoming bank payments to loans in Apache Fineract, posts them as repayments,
 and splits each one between the lender and its partner bank. Fixed rules decide every payment; an optional
 AI statement reader (Claude, ChatGPT, Gemini or a model of your own) only reads bank statements in layouts the rules do not know, and never decides
 ([AI statement reader](#ai-statement-reader)). See [spec.md](spec.md) for the problem.
+It is built for a lender in any country: the currency, the partner bank's share, the date order, the number format and the
+payment channels are settings you type on the page, and the defaults are India's ([Using it outside India](#using-it-outside-india)).
 All data is synthetic. This is a portfolio project, not a production or regulator-approved system.
 
 ## Where to start
@@ -12,9 +14,10 @@ All data is synthetic. This is a portfolio project, not a production or regulato
 |---|---|---|
 | **Use it without typing anything** | Double-click **`Start.bat`**, then follow the tabs in the browser: Connect, Statement, Run, Review ([No-code setup](#no-code-setup-startbat)) | Windows 10/11, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **See the page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
-| **Check the code works** | `python -m unittest discover -s tests` (258 tests, about 35 seconds) | Python 3.11+ only |
+| **Check the code works** | `python -m unittest discover -s tests` (318 tests, about 40 seconds) | Python 3.11+ only |
 | **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **Connect it to your own Fineract** | The page's Connect tab, or [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
+| **Use it outside India** | The Connect tab's "Country and money" box: pick a country, check what it fills in, change what is wrong ([Using it outside India](#using-it-outside-india)) | A statement in one currency, in the layout of your bank |
 | **Feed it your own bank statement** | The page's Statement tab, or [Use your own bank statement](#use-your-own-bank-statement) | A CSV export: HDFC is found by itself; any other layout by choosing its columns, or by the optional AI reader |
 
 The scripts are PowerShell, so the full sandbox run is Windows-only today. The Python modules themselves are
@@ -57,8 +60,8 @@ For a person who should never open a terminal. Once Docker Desktop, Git for Wind
    corrected from a dropdown. **Looks right, import it** writes `data\bank_statement.csv`. A row it cannot read
    is shown with its row number and nothing is imported.
 4. **Run tab.** **Read the loans** (read-only), then **Match**: a table of how many lines would post, go to a
-   person or be ignored, and why, with the rupees. Nothing is posted yet. **Post the clear ones** asks you to
-   confirm the number of payments and the rupee total, then posts, checks the ledger against Fineract and
+   person or be ignored, and why, with the amounts. Nothing is posted yet. **Post the clear ones** asks you to
+   confirm the number of payments and the total, then posts, checks the ledger against Fineract and
    rebuilds the queue. Pressing either button twice is safe: what is in the ledger is never posted again.
 5. **Review tab.** The unclear lines, as before ([Review page](#review-page)).
 
@@ -339,8 +342,9 @@ The same by hand:
 
 The import keeps credits only and prints `rows read`, `credits kept` and `debits skipped`. Columns are found
 by their header names, in any order. `txn_id` is the `Chq./Ref.No.` cell without its leading zeros; if that
-cell is empty or all zeros, it is the one number of 12 or more digits in the narration. Dates (dd/mm/yy)
-become `2026-09-05`, amounts (`1,21,940.65`) become `121940.65`.
+cell is empty or all zeros, it is the one number of 12 or more digits in the narration. Dates (dd/mm/yy
+for India) become `2026-09-05`, amounts (`1,21,940.65`) become `121940.65`. Other date orders, number formats and currencies:
+[Using it outside India](#using-it-outside-india).
 
 **It stops instead of guessing.** A credit whose amount or date it cannot read ends the import with
 `REFUSED, nothing written` and the row number as Excel shows it. Nothing is written, so no money line is
@@ -377,6 +381,43 @@ a summary at the bottom. `data\bank_statement.csv` and `data\answer_key.csv` com
 debits skipped: 41` and gave the same txn_id, date and amount on all 1,654 lines. `matcher.run --bank hdfc`
 on it made the same decision on every line as on the synthetic statement: 1,348 posts, 0 wrong, 100.0%
 auto-posted, 0 duplicates posted. `posting.run` then posted nothing (all 1,348 already in the ledger).
+
+## Using it outside India
+
+Everything country-specific is a setting you type on the Connect tab's **Country and money** box (it is saved into `.env`
+like the other boxes; nothing needs a code change). The defaults are India's, so a project with none of these lines behaves
+exactly as before.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `COUNTRY` | A preset that fills the boxes below as a starting point. Change any of them afterwards. | India |
+| `CURRENCY` | ISO 4217 code. **Test connection** checks it is enabled in your Fineract and that your loans are in it. Decimals come from Fineract's own setting for the currency where it can be read, else a small built-in table (JPY 0; KWD, BHD, OMR and a few others 3; the rest 2). | INR |
+| `PARTNER_SHARE_PERCENT` | The partner bank's share, 0 to 100, decimals allowed (62.5). The lender gets the amount minus that share, so the two always add up; the partner share is rounded half-up to the currency's minor unit. | 80 |
+| `DATE_ORDER` | `day-first`, `month-first` or `auto`. With `auto` the whole file decides: a date with a first part above 12 is day-first, a second part above 12 is month-first. If every date could be read both ways, the import is **refused** and you choose on the Statement tab; it never guesses. | day-first (India); `auto` for the other presets |
+| `NUMBER_FORMAT` | `1,234.56`, `1.234,56`, `1 234,56` (space, no-break or narrow no-break space), `1'234.56`, or `auto`. With `auto` the whole amount column decides (a value with both marks shows which is the decimal; a repeated mark is thousands; one mark and 1 or 2 digits is a decimal). If every amount is like `1.234` it could be either, so the import is **refused** and you choose. Indian grouping (`1,23,456.78`) is read for India. `(1,234.56)`, `-1.234,56`, `1,234.56-` and a Cr or Dr suffix are read as signs; credits and debits are told apart as before. | 1,234.56 (India); `auto` for the other presets |
+| `CHANNELS` | Comma-separated payment-type names. A narration containing one as a whole word is posted with the Fineract payment type of that name if there is one, else with none. **Test connection** lists which exist (informational, never a failure). | UPI,NEFT,IMPS,NACH |
+
+**Presets are a starting point, not facts.** Each is one small table in `locale_settings.py`. None except India's was checked
+against a real bank export or a real Fineract: **unverified** are every non-India preset's channel names (typical scheme names,
+not what your Fineract calls its payment types), the choice of `auto` for dates and numbers (right because banks differ, but not
+checked per country), the currency names used in the connection test's hints, the minor-unit table (check ISO 4217 for a currency
+that matters to you), and the browser locale used to show money (United Kingdom `en-GB`, Eurozone `en-IE`, a choice that could
+as well be `de-DE`, United States `en-US`, Brazil `pt-BR`, Kenya `en-KE`, which needs a browser that knows it; an unknown locale or
+currency falls back to the ISO code and a plain number). The decimal-places field names read from Fineract (`decimalPlaces`, or
+`digitsAfterDecimal`) are also unverified; a miss falls back to the table.
+
+**One currency per run.** The loans, the statement, the ledger, the audit log, the queue and the partner report are all in the one
+currency in `CURRENCY`; the files keep plain `1234.56` amounts with a dot and no symbol. A loan in another currency fails the connection
+test; a statement with a `Currency` column whose value differs from `CURRENCY` is refused with its row number. Nothing is converted.
+The page shows money with the browser's own currency formatting for the preset's locale, so grouping and the symbol follow it.
+
+**Not yet (later stages).** Stage B: importers for camt.053 and MT940 statements, which most banks outside India export instead of
+a CSV. Stage C: name conventions (the matcher still assumes a first name then a surname, and the `SCPL` loan-account prefix is the
+synthetic lender's). Until then a bank in another country needs a CSV whose columns you choose on the Statement tab.
+The demo seed (`seed.load_fineract`) stays India-only: it creates INR and the four Indian payment types, for the sandbox only.
+
+**Not legal or compliance advice.** Co-lending rules and the partner's share differ by country and by agreement; the 80 is an
+illustration. Check yours with whoever is responsible for it. The agent only records the split you tell it to.
 
 ## Matcher
 
@@ -419,8 +460,8 @@ For each `post` decision, in order: skip it if its txn_id is already in the ledg
 person by an earlier run; read the loan from
 Fineract and, if the matched instalment is already paid or the loan is closed, queue it instead; post the
 repayment with the line's date, `externalId` and `receiptNumber` = txn_id and the channel as payment type;
-split it 80:20 (partner share rounded half-up to the paisa, the lender gets the rest, so the two always add
-up); append one row to `data\ledger.csv` and one to `data\audit.csv` (posted, recovered, queued or
+split it by `PARTNER_SHARE_PERCENT` (80 unless you change it, so 80:20; the partner share is rounded half-up to the
+currency's minor unit, the paisa for INR, and the lender gets the rest, so the two always add up); append one row to `data\ledger.csv` and one to `data\audit.csv` (posted, recovered, queued or
 failed, with the reason and the approver). A failed post is logged and the run carries on. Steps:
 [docs/superpowers/specs/2026-11-16-posting-design.md](docs/superpowers/specs/2026-11-16-posting-design.md).
 
@@ -571,10 +612,10 @@ The page's tabs are Connect, Statement, Run, Review and Guide; the first three a
   ([Suggestions for unclear lines](#suggestions-for-unclear-lines-stage-two)).
 - **It is the CSV workflow, not a second one.** A click writes `decision`, `loan_ref`, `approver` and `note`
   into `data\queue.csv`, exactly as a person would in Excel, then runs `review.apply` on that one row. So the
-  duplicate guard, the 80:20 split, the ledger row and the audit row are the same code. Rows other people
+  duplicate guard, the configured split (80:20 by default), the ledger row and the audit row are the same code. Rows other people
   filled in Excel are left alone until someone runs `review.apply`. If `review.apply` refuses a row (unknown
   loan_ref, no approver, Fineract said no), the problem appears on the row and stays in the file.
-- **Summary strip.** Payments posted, rupees, the partner bank's and the lender's share, queue size, and a
+- **Summary strip.** Payments posted, the amount (in your currency, formatted by the browser for your locale), the partner bank's and the lender's share, queue size, and a
   Count button for loans in arrears (it reads every loan from Fineract and checks the ledger against it, as
   `posting.verify` does; about 20 seconds for 260 loans). The partner report link rebuilds
   `data\partner_report.csv` from the ledger and downloads it.
@@ -584,7 +625,7 @@ The page's tabs are Connect, Statement, Run, Review and Guide; the first three a
   Anything that changes data is a POST carrying a token made new each run and written into the page. The
   Fineract password and the Claude API key are never sent to the browser or logged, and every JSON answer is
   scrubbed of both. A statement upload is limited to 5 MB, any other request to 64 KB. Posting from the Run
-  tab needs the number of payments and the rupee total the person confirmed, and is refused if they changed.
+  tab needs the number of payments and the total the person confirmed, and is refused if they changed.
 - **Limit.** One local user, no login: the approver is whatever name is typed. More than one reviewer, or
   any use beyond this machine, needs real accounts first, because that name is the audit trail.
 
@@ -629,8 +670,8 @@ The agent reads loans and schedules from Fineract's API and writes one thing bac
    |---|---|
    | `READ_LOAN` | List loans, read schedules and transactions, find a repayment by its external id |
    | `REPAYMENT_LOAN` | Post a repayment. This is the only thing it writes. |
-   | `READ_PAYMENTTYPE` | Look up the UPI / NEFT / IMPS / NACH payment types |
-   | `READ_CURRENCY` | Only for the INR check on the Connect tab |
+   | `READ_PAYMENTTYPE` | Look up the payment types named in `CHANNELS` (UPI / NEFT / IMPS / NACH for India) |
+   | `READ_CURRENCY` | Only for the currency check on the Connect tab |
    | `READ_CLIENT` | Only for `start.ps1`'s start-up check, which lists one client |
 
    These five codes are in Fineract's own permission list (`GET /permissions` on the sandbox,
@@ -663,8 +704,8 @@ The agent reads loans and schedules from Fineract's API and writes one thing bac
    `start.ps1` only writes `.env` when there is none, so your values are kept.
 4. **Start the page and test:** `.venv\Scripts\python -m ui.serve`, open http://127.0.0.1:8000/#connect, press
    "Test connection". It only reads (one login call, then GETs) and reports seven checks as pass or fail,
-   each with its fix: Fineract answers at the URL, the tenant exists, the login works, INR is enabled, the
-   four payment types exist, loans exist (and how many have an externalId), a loan's schedule can be read.
+   each with its fix: Fineract answers at the URL, the tenant exists, the login works, your currency (INR by default) is enabled, the
+   configured payment channels are listed as found or not (informational), loans exist (and how many have an externalId), a loan's schedule can be read.
 5. **Read the loans:** the Run tab's "Read the loans", or `.venv\Scripts\python -m statement.fetch_schedules`;
    either writes `data\schedules.json`.
 6. **Bring a bank statement** ([Use your own bank statement](#use-your-own-bank-statement)), import and match
@@ -696,8 +737,8 @@ clients and 260 back-dated loans. Against your own Fineract use the commands abo
 | The **client's display name** on the loan | Matched against the payer's name in the bank narration. The first word is taken as the first name and the rest as the surname. |
 | The loan's **repayment schedule** | Each instalment's due date and total due. A line is posted automatically only if its amount equals an instalment exactly and its date is within 5 days of the due date. |
 | The loan's **account number** | A narration containing `SCPL` + the 9-digit account number names the loan directly. The prefix is the synthetic lender's; another one is a one-line change in `matcher/match.py`. |
-| **Payment types** named UPI, NEFT, IMPS, NACH | The channel found in the narration is posted as the payment type. A missing type does not stop the posting; the repayment just has none. |
-| **INR** as an enabled currency | Amounts are rupees with two decimals. Loans in another currency are not supported. |
+| **Payment types** named like your `CHANNELS` (UPI, NEFT, IMPS, NACH for India) | The channel found in the narration is posted as the payment type. A missing type does not stop the posting; the repayment just has none. |
+| Your **currency** (`CURRENCY`, INR by default) as an enabled currency | One currency per run, with that currency's own decimals. Loans, or statement lines, in another currency are refused and never converted. |
 | Repayment **External Id** | Each repayment is posted with the bank's UTR as the transaction's External Id (and as its receipt number). Fineract keeps that unique, so one bank line can never be posted twice, even from a second machine. |
 
 **What the agent never does.** It never creates or changes clients, loans, products, currencies or payment
@@ -763,7 +804,7 @@ The same thing one module at a time, with the sandbox already running:
 .venv\Scripts\python -m statement.generate          # 3. bank statement and answer key
 .venv\Scripts\python -m matcher.run                 # 4. post, queue or ignore each line
 .venv\Scripts\python -m matcher.evaluate            # 5. accuracy against the answer key
-.venv\Scripts\python -m posting.run                 # 6. post the clear lines, split 80:20
+.venv\Scripts\python -m posting.run                 # 6. post the clear lines, split by PARTNER_SHARE_PERCENT (80:20 by default)
 .venv\Scripts\python -m posting.verify              # 7. ledger against Fineract
 .venv\Scripts\python -m review.build                # 8. queue.csv for a person
 .venv\Scripts\python -m review.report               # 9. partner report
@@ -811,7 +852,8 @@ connector is used as it is, not modified.
 and its buy-back. It has no per-loan participation ratio and does not divide repayments. The 80:20
 split ledger is ours to build, outside Fineract.
 
-**RBI.** The 80:20 ratio is an illustration, not a rule. RBI's Co-Lending Arrangements Directions, 2025
+**RBI (an India example).** The 80:20 default is an illustration, not a rule; co-lending rules and the split percentages differ
+by country and by arrangement (see [Using it outside India](#using-it-outside-india)). RBI's Co-Lending Arrangements Directions, 2025
 (in force 1 January 2026) require each lender to keep at least 10% of every loan and the borrower to be
 charged a blended interest rate; the 2020 model they replace required the NBFC to keep at least 20%.
 These points come from law-firm summaries, not the RBI text. This project does not claim RBI compliance.
