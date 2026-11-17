@@ -819,6 +819,10 @@ These points come from law-firm summaries, not the RBI text. This project does n
 **Targets.** The accuracy targets in the plan (under 0.5% wrong auto-postings, at least 80% auto-posted,
 no duplicates, and so on) are goals to measure against, not results.
 
+## Author
+
+Built by Raman Lamba: [ramanlambaportfolio.vercel.app](https://ramanlambaportfolio.vercel.app).
+
 ## License
 
 MIT, see [LICENSE](LICENSE). The sandbox it runs against, Apache Fineract and the openMF connector, have their own
