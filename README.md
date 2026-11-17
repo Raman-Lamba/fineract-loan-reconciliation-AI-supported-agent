@@ -454,7 +454,9 @@ due after the statement ends on 31 October. The review queue below deals with th
 `review.build` puts two kinds of line in `data\queue.csv`: those the matcher queued, and those posting found
 already paid. Each row has the bank line, the reason it is there, and the candidate loans with the borrower's
 name and the instalment due nearest the payment (`L0189 Rajesh Kumar: 26314.16 due 2026-02-20`). A line the
-matcher found no loan for has no candidates; the person looks the payer up in Fineract. Design:
+matcher found no loan for has no candidates in the CSV; in Excel the person looks the payer up in Fineract, while
+the [Review page](#review-page) shows up to 5 likely loans for it
+([Suggestions for unclear lines](#suggestions-for-unclear-lines-stage-two)). Design:
 [docs/superpowers/specs/2026-11-16-review-queue-design.md](docs/superpowers/specs/2026-11-16-review-queue-design.md).
 
 **How a person works the queue**
