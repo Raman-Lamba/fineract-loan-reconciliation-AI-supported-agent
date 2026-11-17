@@ -118,16 +118,26 @@
   </div>
   <h2>AI statement reader (optional)</h2>
   <div class="box">
-    <p>With a Claude API key the page can read a bank statement in any layout: it proposes which column is which, and reads
+    <p>With an AI service the page can read a bank statement in any layout: it proposes which column is which, and reads
       the payer's name from narrations the rules do not know. It only reads. It never chooses a loan, never posts and never
       approves: the matcher's fixed rules decide, and anything unclear still goes to a person. Without a key everything
-      works as before (HDFC layout, columns chosen by hand). Each use costs a little on your Anthropic account.</p>
+      works as before (HDFC layout, columns chosen by hand). Use the service you already pay for; each use costs a little
+      on that account. A weaker model sends more lines to a person, never a wrong posting.</p>
     <div class="form">
-      <label>Claude API key <input name="ANTHROPIC_API_KEY" type="password" autocomplete="off" placeholder="leave empty to keep the saved one">
-        <small data-saved="ANTHROPIC_API_KEY"></small></label>
-      <label>Model (optional) <input name="AI_MODEL" id="c-model" placeholder="claude-opus-5-5">
-        <small>Empty means claude-opus-5-5. claude-haiku-5-5 is much cheaper.</small></label>
+      <label>Which AI service <select name="AI_PROVIDER" id="c-provider"></select>
+        <small id="c-pnote"></small></label>
+      <label>Model <input name="AI_MODEL" id="c-model" list="c-models" autocomplete="off">
+        <datalist id="c-models"></datalist>
+        <small id="c-mnote">Pick one or type the exact name. Empty means the one shown.</small></label>
+      <label id="c-baselabel" hidden>Address of the service <input name="AI_BASE_URL" id="c-base" placeholder="http://localhost:11434/v1">
+        <small>Ollama on this computer: http://localhost:11434/v1 and no key. Anything else must start with https://.</small></label>
+      <label id="c-keylabel"><span id="c-keyname">API key</span> <input name="AI_API_KEY" id="c-key" type="password" autocomplete="off" placeholder="leave empty to keep the saved one">
+        <small id="c-keynote"></small></label>
     </div>
+    <div id="c-consent"></div>
+    <p><button id="c-testai">Test AI</button> <span id="c-testai-state" class="soft"></span></p>
+    <p class="soft">Test AI saves the boxes above, then sends one fixed harmless question ("reply with ok"). No statement
+      data is sent. It needs the consent tick, like every AI call.</p>
     <p><button id="c-forget">Forget the saved key</button></p>
   </div>
   <p><button class="approve" id="c-save">Save</button> <span id="c-state" class="soft"></span></p>
@@ -267,7 +277,8 @@
           <tr><td><code>BANK</code></td><td>Whose narrations your bank statement has: <code>hdfc</code>, <code>icici</code>, <code>sbi</code>,
             or <code>other</code> (names then come only from the AI reader)</td><td><code>hdfc</code></td></tr>
           <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Optional. Turns on the AI statement reader. Never shown on this page or in its log.</td><td>not set</td></tr>
-          <tr><td><code>AI_MODEL</code></td><td>Optional. The Claude model the reader uses.</td><td>not set (<code>claude-opus-5-5</code>)</td></tr>
+          <tr><td><code>AI_PROVIDER</code>, <code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>AI_API_KEY</code>, <code>AI_BASE_URL</code></td><td>Optional. <code>AI_PROVIDER</code> is <code>claude</code> (default), <code>openai</code>, <code>gemini</code> or <code>other</code>. Each service has its own key line, so a key is never sent to another service: <code>ANTHROPIC_API_KEY</code> (Claude), <code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, and <code>AI_API_KEY</code> for <code>other</code>. <code>AI_BASE_URL</code> is for <code>other</code> only.</td><td>not set (Claude)</td></tr>
+          <tr><td><code>AI_MODEL</code></td><td>Optional. The model the reader uses.</td><td>not set (the provider's default)</td></tr>
           <tr><td><code>MIFOS_URL</code></td><td>Optional. Address of the Mifos web app, for the "open in Mifos" links, if it is not
             the host in <code>MIFOSX_BASE_URL</code>.</td><td>not set (<code>http://127.0.0.1:4200</code> is worked out)</td></tr>
           <tr><td><code>MIFOSX_SKIP_TLS_VERIFY</code></td><td>Optional. <code>true</code> only for an https test server with a self-signed certificate.</td><td>not set</td></tr>
@@ -333,7 +344,7 @@
       <tr><td>"REFUSED" or "row N: ..." on the Statement tab</td><td>That row of your file cannot be read with the columns chosen (an
         amount or date in another form, or a credit with no reference). Check the column choices; if they are right, fix or remove that row
         in the file (a cash deposit with no reference is recorded by hand in Fineract) and choose the file again.</td></tr>
-      <tr><td>"AI reader did not run" or "not used"</td><td>No key saved, no consent ticked, or Anthropic's API did not answer. Nothing
+      <tr><td>"AI reader did not run" or "not used"</td><td>No key saved, no consent ticked, or the AI service did not answer. Nothing
         is lost: choose the columns by hand, and unread narrations go to a person.</td></tr>
       <tr><td><code>Error 403</code></td><td>The user lacks a permission (table in step 1) or cannot see the loans' office.</td></tr>
       <tr><td>Everything is slow (2 seconds a call)</td><td>Use <code>127.0.0.1</code> instead of <code>localhost</code> in <code>MIFOSX_BASE_URL</code>.</td></tr>
@@ -490,6 +501,7 @@ function showSettings(s) {
     note.textContent = s.saved[note.dataset.saved] ? "Saved. Never shown here." : "Not set.";
   const v = s.values;
   $("c-missing").hidden = !!(v.MIFOSX_BASE_URL && v.MIFOSX_USERNAME && s.saved.MIFOSX_PASSWORD);
+  fillProviders();
   renderConsent();
   refreshBanks();
 }
@@ -515,7 +527,34 @@ async function saveSettings(forget) {
   if (!s.problem) showSettings(s);
 }
 $("c-save").addEventListener("click", () => saveSettings());
-$("c-forget").addEventListener("click", () => saveSettings(["ANTHROPIC_API_KEY"]));
+$("c-forget").addEventListener("click", () => saveSettings(["AI_API_KEY"]));
+
+// The AI boxes follow the provider choice. A key saved for one provider is kept apart from the others'.
+function fillProviders() {
+  const ai = SETTINGS.ai, select = $("c-provider");
+  select.replaceChildren(...Object.entries(ai.providers).map(([id, p]) => el("option", {value: id, selected: id === ai.provider}, p.name)));
+  providerChanged(false);
+}
+function providerChanged(clear) {
+  const p = SETTINGS.ai.providers[$("c-provider").value];
+  if (clear) $("c-model").value = "";
+  $("c-model").placeholder = p.model || "the model's exact name";
+  $("c-models").replaceChildren(...p.models.map(m => el("option", {value: m})));
+  $("c-baselabel").hidden = $("c-provider").value !== "other";
+  $("c-keyname").textContent = $("c-provider").value === "other" ? "API key (empty for a model on this computer)" : p.name + " API key";
+  $("c-pnote").textContent = p.verified;
+  $("c-keynote").textContent = SETTINGS.ai.key && $("c-provider").value === SETTINGS.ai.provider ? "Saved. Never shown here." : "Not set.";
+}
+$("c-provider").addEventListener("change", () => providerChanged(true));
+$("c-testai").addEventListener("click", async () => {
+  $("c-testai").disabled = true;
+  $("c-testai-state").textContent = "saving, then asking…";
+  await saveSettings();
+  const r = await call("/api/testai", {});
+  $("c-testai").disabled = false;
+  $("c-testai-state").replaceChildren(r.error ? r.error : el("span", {class: r.ok ? "pass" : "fail"}, r.ok ? "PASS: " : "FAIL: "),
+    ...(r.error ? [] : [r.detail + (r.fix ? " Fix: " + r.fix : "")]));
+});
 
 // The consent box: shown wherever the AI reader could run, until the person ticks it once (kept in data/).
 function consentBox() {
@@ -523,7 +562,8 @@ function consentBox() {
   const save = el("button", {}, "Save my consent");
   const box = el("div", {class: "box notice"},
     el("p", {}, el("b", {}, "Before the AI reader runs. "),
-      "It sends text to Anthropic's API (Claude): to find the columns, the first 20 rows of your file with every digit " +
+      (SETTINGS.ai.local ? "Your model runs on this computer, so nothing leaves it. " : "It sends text to " + SETTINGS.ai.label + " (model " + SETTINGS.ai.model + "): ") +
+      "To find the columns, the first 20 rows of your file with every digit " +
       "replaced by 9; to read payers, only the narrations the rules cannot read. Amounts, balances and account numbers " +
       "from other columns are never sent, and neither is anything from .env except the key itself. Narrations can " +
       "include borrowers' names. The model only reads: it never chooses a loan, posts or approves."),
@@ -538,11 +578,12 @@ function consentBox() {
 }
 
 function renderConsent() {
-  const need = SETTINGS.ai.key && !SETTINGS.ai.consent;
+  const need = SETTINGS.ai.ready && !SETTINGS.ai.consent;
+  $("c-consent").replaceChildren(...(need ? [consentBox()] : []));
   $("st-consent").replaceChildren(...(need ? [consentBox()] : []));
   $("r-consent").replaceChildren(...(need ? [consentBox()] : []));
-  $("r-ai-wrap").hidden = !SETTINGS.ai.key;
-  $("r-ai").checked = SETTINGS.ai.key && SETTINGS.ai.consent;
+  $("r-ai-wrap").hidden = !SETTINGS.ai.ready;
+  $("r-ai").checked = SETTINGS.ai.ready && SETTINGS.ai.consent;
   $("r-ai").disabled = !SETTINGS.ai.consent;
 }
 
@@ -569,7 +610,7 @@ $("st-file").addEventListener("change", async () => {
 
 $("st-read").addEventListener("click", async () => {
   $("st-read").disabled = true;
-  const ai = !!(SETTINGS && SETTINGS.ai.key && SETTINGS.ai.consent);
+  const ai = !!(SETTINGS && SETTINGS.ai.ready && SETTINGS.ai.consent);
   $("st-readstate").textContent = ai ? "reading (the AI reader may take up to a minute)…" : "reading…";
   READ = await call("/api/read", {ai});
   $("st-read").disabled = false;

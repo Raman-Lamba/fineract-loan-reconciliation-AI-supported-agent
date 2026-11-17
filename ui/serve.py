@@ -48,7 +48,10 @@ MAX_BODY = 65536
 # The Connect form's fields: (name in .env, write-only?). Secrets are never sent back, only "saved" or not.
 SETTINGS = [("MIFOSX_BASE_URL", False), ("MIFOSX_TENANT_ID", False), ("MIFOSX_USERNAME", False),
             ("MIFOSX_PASSWORD", True), ("MIFOS_URL", False), ("BANK", False), ("ANTHROPIC_API_KEY", True),
-            ("AI_MODEL", False)]
+            ("AI_MODEL", False), ("AI_PROVIDER", False), ("AI_BASE_URL", False)]
+# "AI_API_KEY" is the form's one key box: it is saved under the chosen provider's own name (ai.client.PROVIDERS),
+# so a key typed for one provider is never sent to another.
+KEY_BOX = "AI_API_KEY"
 BANKS = [bank for bank in FORMATS if bank != "synthetic"]
 
 PAGE = Path(__file__).with_name("index.html")
@@ -236,16 +239,32 @@ def settings_view(env: Path) -> dict:
     return {"values": {name: values.get(name, "") for name, secret in SETTINGS if not secret},
             "saved": {name: bool(values.get(name)) for name, secret in SETTINGS if secret},
             "banks": BANKS, "env_exists": env.exists(),
-            "ai": {"key": bool(values.get("ANTHROPIC_API_KEY")), "consent": ai_client.consent_given(files.DATA),
-                   "model": values.get("AI_MODEL") or ai_client.DEFAULT_MODEL, "consent_text": ai_client.CONSENT}}
+            "ai": ai_view(values)}
 
 
-def clean_settings(body: dict) -> dict:
+def ai_view(values: dict) -> dict:
+    try:
+        cfg = ai_client.config(values)
+    except ai_client.AIError:  # a hand-edited bad AI_PROVIDER: show Claude's setup until it is chosen again
+        cfg = ai_client.config({})
+    return {"provider": cfg["provider"], "model": cfg["model"], "base": cfg["base"], "local": cfg["local"],
+            "key": bool(cfg["key"]), "ready": ai_client.available_for(cfg), "consent": ai_client.consent_given(files.DATA, cfg),
+            "consent_text": ai_client.consent_text(cfg), "label": cfg["label"],
+            "providers": {name: {"name": p["name"], "model": p["model"], "models": p["models"], "base": p.get("base", ""),
+                                 "verified": p["verified"]} for name, p in ai_client.PROVIDERS.items()}}
+
+
+def clean_settings(body: dict, current_provider: str = "") -> dict:
     """The form's values that may go into .env: name -> text, or None to remove the line. Raises ValueError.
 
     An empty password or key box means "keep the saved one", so a secret never has to be shown to be kept.
     """
-    out, names = {}, dict(SETTINGS)
+    out, names = {}, {**dict(SETTINGS), KEY_BOX: True}
+    given = body.get("values") or {}
+    provider = given.get("AI_PROVIDER", current_provider) or "claude"
+    if provider not in ai_client.PROVIDERS:
+        raise ValueError(f"AI_PROVIDER must be one of {', '.join(ai_client.PROVIDERS)}")
+    key_name = ai_client.PROVIDERS[provider]["key"]
     for name, value in (body.get("values") or {}).items():
         if name not in names or not isinstance(value, str):
             raise ValueError(f"'{name}' is not a setting this page writes")
@@ -258,14 +277,19 @@ def clean_settings(body: dict) -> dict:
             raise ValueError(f"{name} must start with http:// or https://")
         if name == "BANK" and value and value not in BANKS:
             raise ValueError(f"BANK must be one of {', '.join(BANKS)}")
-        if name == "AI_MODEL" and value and not re.fullmatch(r"claude-[a-z0-9.-]+", value):
-            raise ValueError("AI_MODEL must be a Claude model id such as claude-opus-5-5")
-        if name == "ANTHROPIC_API_KEY" and re.search(r"\s", value):
+        if name == "AI_MODEL" and value:
+            if provider == "claude" and not re.fullmatch(r"claude-[a-z0-9.-]+", value):
+                raise ValueError("AI_MODEL must be a Claude model id such as claude-opus-5-5")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", value):
+                raise ValueError("AI_MODEL must be a model name such as gemini-3.8-flash or llama3.1")
+        if name == "AI_BASE_URL" and value and not re.match(r"https?://\S+$", value):
+            raise ValueError("AI_BASE_URL must start with http:// or https://, such as http://localhost:11434/v1")
+        if name in ("ANTHROPIC_API_KEY", KEY_BOX) and re.search(r"\s", value):
             raise ValueError("the API key has a space in it: paste it again")
-        out[name] = value
+        out[key_name if name == KEY_BOX else name] = value
     for name in body.get("forget") or []:
         if names.get(name):  # only a password or a key can be forgotten from the form
-            out[name] = None
+            out[key_name if name == KEY_BOX else name] = None
     return out
 
 
@@ -291,7 +315,10 @@ def consent(env: Path, body: dict) -> dict:
     """Records the person's tick (in data/, so it holds for every browser). Only the exact box counts."""
     if body.get("agree") is not True:
         return {"problem": "Tick the box first.", **settings_view(env)}
-    ai_client.record_consent(files.DATA)
+    try:
+        ai_client.record_consent(files.DATA, ai_client.config(ai_client.read_env(env)))
+    except ai_client.AIError as problem:
+        return {"problem": str(problem), **settings_view(env)}
     return {"done": "Your consent is saved.", **settings_view(env)}
 
 
@@ -377,7 +404,7 @@ def read_statement(env: Path, use_ai: bool, opener=None) -> dict:
         out["source"] = None
         out["note"] = out["note"] or ("This is not the HDFC layout and no column map is saved for it. Choose the "
                                       "columns below, starting with the row that holds the column names" +
-                                      ("." if use_ai else ", or save a Claude API key on the Connect tab to have "
+                                      ("." if use_ai else ", or save a Claude API key (or set up another AI service) on the Connect tab to have "
                                                           "them read for you."))
     return {**out, **preview(out["map"], text)}
 
@@ -478,7 +505,7 @@ def run_match(env: Path, body: dict, opener=None) -> dict:
             send = ai_client.sender(env, files.DATA, opener)
             extracted, stats = extract(todo, send, files.DATA / "ai_cache.json")
             log.append(f"AI reader: {stats['narrations']} narrations the rules could not read; {stats['from_cache']} "
-                       f"answered from the cache, {stats['sent']} sent to Anthropic; {stats['read']} gave a name or "
+                       f"answered from the cache, {stats['sent']} sent to {ai_view(ai_client.read_env(env))['label']}; {stats['read']} gave a name or "
                        f"loan account, {stats['unread']} could not be read (they go to a person).")
             log += [f"AI reader problem: {problem}" for problem in stats["errors"]]
         except ai_client.AIError as problem:
@@ -621,6 +648,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/decide": lambda body: decide(fc, body),
             "/api/settings": lambda body: self.save_settings(body),
             "/api/consent": lambda body: consent(env, body),
+            "/api/testai": lambda body: ai_client.try_it(env, files.DATA, opener),
             "/api/upload": upload,
             "/api/read": lambda body: read_statement(env, bool(body.get("ai")), opener),
             "/api/preview": lambda body: preview(body.get("map"), _export()),
@@ -645,7 +673,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def save_settings(self, body: dict) -> dict:
         try:
-            updates = clean_settings(body)
+            updates = clean_settings(body, ai_client.read_env(self.server.env).get("AI_PROVIDER", ""))
         except ValueError as problem:
             return {"problem": str(problem), **settings_view(self.server.env)}
         merge_env(self.server.env, updates)

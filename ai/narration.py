@@ -6,7 +6,8 @@ JSON, or misses a narration, leaves that narration unread: the matcher then queu
 The fields only fill blanks in matcher.match.decide; amount, date and txn_id never come from here.
 
 Only the narration text is sent, about BATCH unique ones per request. Answers are cached by a hash of the
-narration in data/ai_cache.json, so a re-run costs nothing.
+narration, the provider and the model in data/ai_cache.json, so a re-run costs nothing and another model
+never reuses an answer.
 """
 from __future__ import annotations
 
@@ -34,8 +35,9 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["items"]
                              "reference": {"type": "string"}, "loan_account": {"type": "string"}}}}}}
 
 
-def key(narration: str) -> str:
-    return hashlib.sha256(narration.encode("utf-8")).hexdigest()
+def key(narration: str, scope: str = "") -> str:
+    """Cache key. `scope` is send.scope (provider:model); entries from before it existed are plain hashes, so misses."""
+    return hashlib.sha256((f"{scope}{narration}" if scope else narration).encode("utf-8")).hexdigest()
 
 
 def valid(narration: str, item) -> dict | None:
@@ -75,8 +77,8 @@ def extract(narrations, send, cache_file: Path) -> tuple[dict, dict]:
     A failed request is reported in what happened and its narrations stay unread; it never raises.
     """
     unique = list(dict.fromkeys(narrations))
-    cache = _load(cache_file)
-    todo = [text for text in unique if key(text) not in cache]
+    cache, scope = _load(cache_file), getattr(send, "scope", "")
+    todo = [text for text in unique if key(text, scope) not in cache]
     stats = {"narrations": len(unique), "from_cache": len(unique) - len(todo), "sent": 0, "errors": []}
     for start in range(0, len(todo), BATCH):
         batch = todo[start:start + BATCH]
@@ -91,13 +93,13 @@ def extract(narrations, send, cache_file: Path) -> tuple[dict, dict]:
             continue
         for item in items:
             i = item.get("i") if isinstance(item, dict) else None
-            if type(i) is int and 0 <= i < len(batch) and key(batch[i]) not in cache:
+            if type(i) is int and 0 <= i < len(batch) and key(batch[i], scope) not in cache:
                 fields = valid(batch[i], item)
                 if fields is not None:
-                    cache[key(batch[i])] = fields
+                    cache[key(batch[i], scope)] = fields
         cache_file.write_text(json.dumps(cache, indent=1, ensure_ascii=False), encoding="utf-8")
     # Checked again on the way out: the cache is a file anyone could edit.
-    out = {text: valid(text, cache[key(text)]) for text in unique if key(text) in cache}
+    out = {text: valid(text, cache[key(text, scope)]) for text in unique if key(text, scope) in cache}
     out = {text: fields for text, fields in out.items() if fields}
     stats["read"] = sum(bool(f["payer_name"] or f["loan_account"]) for f in out.values())
     stats["unread"] = len(unique) - len(out)

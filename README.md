@@ -2,7 +2,7 @@
 
 An agent that matches incoming bank payments to loans in Apache Fineract, posts them as repayments,
 and splits each one between the lender and its partner bank. Fixed rules decide every payment; an optional
-AI statement reader (Claude) only reads bank statements in layouts the rules do not know, and never decides
+AI statement reader (Claude, ChatGPT, Gemini or a model of your own) only reads bank statements in layouts the rules do not know, and never decides
 ([AI statement reader](#ai-statement-reader)). See [spec.md](spec.md) for the problem.
 All data is synthetic. This is a portfolio project, not a production or regulator-approved system.
 
@@ -12,7 +12,7 @@ All data is synthetic. This is a portfolio project, not a production or regulato
 |---|---|---|
 | **Use it without typing anything** | Double-click **`Start.bat`**, then follow the tabs in the browser: Connect, Statement, Run, Review ([No-code setup](#no-code-setup-startbat)) | Windows 10/11, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **See the page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
-| **Check the code works** | `python -m unittest discover -s tests` (181 tests, about 20 seconds) | Python 3.11+ only |
+| **Check the code works** | `python -m unittest discover -s tests` (207 tests, about 35 seconds) | Python 3.11+ only |
 | **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **Connect it to your own Fineract** | The page's Connect tab, or [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
 | **Feed it your own bank statement** | The page's Statement tab, or [Use your own bank statement](#use-your-own-bank-statement) | A CSV export: HDFC is found by itself; any other layout by choosing its columns, or by the optional AI reader |
@@ -35,7 +35,7 @@ wrong, 273 queued for a person, ledger and partner report equal to Fineract.
 | 4 | Post repayments (UTR as `externalId`), 80:20 split ledger | built |
 | 5 | Review queue a person edits in Excel, partner report, end-to-end demo | built |
 | UI | Local review page for the same queue, and a setup guide with a live connection test ([Review page](#review-page)) | built |
-| No-code + AI reader, stage one | Connect, Statement and Run tabs and `Start.bat`, so nobody types a command or edits a file; an optional Claude reader for statement layouts and narrations the rules do not know ([No-code setup](#no-code-setup-startbat), [AI statement reader](#ai-statement-reader)) | built; the AI reader tested with a fake model only |
+| No-code + AI reader, stage one | Connect, Statement and Run tabs and `Start.bat`, so nobody types a command or edits a file; an optional AI reader (Claude, OpenAI, Gemini or any OpenAI-compatible service, a local one included) for statement layouts and narrations the rules do not know ([No-code setup](#no-code-setup-startbat), [AI statement reader](#ai-statement-reader)) | built; the AI reader tested with fake models only, no live provider call |
 
 Connecting it to a Fineract and Mifos of your own: [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos).
 
@@ -79,10 +79,11 @@ session.
 
 ## AI statement reader
 
-Optional. Without an API key the page and every command work exactly as before: HDFC exports are found by
-themselves and any other layout's columns are chosen by hand from dropdowns.
+Optional. Without a key (and, for a model on this computer, without a model chosen) the page and every command
+work exactly as before: HDFC exports are found by themselves and any other layout's columns are chosen by hand
+from dropdowns.
 
-**What it does.** With a Claude API key saved on the Connect tab (and the consent box ticked once), it reads
+**What it does.** With an AI service chosen on the Connect tab (and the consent box ticked once), it reads
 two things the fixed rules cannot:
 
 - **A statement layout it has not seen.** From the first 20 rows it proposes the header row, the date column
@@ -94,38 +95,85 @@ two things the fixed rules cannot:
   never sent again. `start.ps1 -Reconcile` and `statement.import_bank --bank <bank>` use the confirmed map too.
 - **Narrations the rules cannot read** (a bank with no line in `FORMATS`, or a narration in a style the line
   does not cover): about 40 per request it returns the payer's name, the channel, the reference and a loan
-  account if one is written there. Answers are cached by a hash of the narration in `data\ai_cache.json`, so a
-  re-run costs nothing.
+  account if one is written there. Answers are cached in `data\ai_cache.json` by a hash of the narration, the
+  provider and the model, so a re-run costs nothing and switching provider or model never reuses another
+  model's answers (entries from before this are simply asked again).
 
-**What it never does.** It never chooses a loan, posts, approves or changes an outcome. Its fields only fill a
-blank that the rules left (`matcher.match.decide(..., extracted)`), and the rules then decide exactly as with
-a name they read themselves: the exact instalment amount, a due date within 5 days, one borrower who fits, no
-look-alike owing the same. It never overrides a rule's reading. A name or loan account must appear word for
-word in the narration and a reference must appear exactly, or it is dropped. Amount, date and txn_id always
-come from the statement's own columns. If the model's answer is malformed, cut off, refused, or the API does
-not answer, the line takes the rules' path and, if they cannot read it, goes to a person. Every reason that
-rests on a field the model read says "(read by the AI reader)" in the decision and the audit trail.
+**Which AI service.** Use the one you already pay for. Choose it on the Connect tab: no file editing.
 
-**Privacy.** Before the first use the page shows what is sent and asks for a tick: "I understand narration
-text, which can include people's names, is sent to Anthropic's API". The tick is stored in
-`data\ai_consent.json`; without it no request is made. Sent: for the layout, the first 20 rows with every
-digit replaced by 9 (column names and narration words go; no amount, balance, date value or account number);
-for narrations, only the narration text of lines the rules could not read. Never sent: amounts, balances,
-account numbers from other columns, anything from `.env`. The key is sent only as Anthropic's `x-api-key`
-header; it is never shown on the page, put in a response or log, or committed (`.env` is git-ignored).
+| Choice (`AI_PROVIDER`) | Key line in `.env` | Address | Default model; others in the dropdown |
+|---|---|---|---|
+| Claude (`claude`, the default) | `ANTHROPIC_API_KEY` | `api.anthropic.com` (Messages API) | `claude-opus-5-5`; `claude-sonnet-5-5`, `claude-haiku-5-5` |
+| ChatGPT / OpenAI (`openai`) | `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-6.1-sol`; `gpt-6-astra`, `gpt-6.1-terra`, `gpt-6-luna` |
+| Gemini (`gemini`) | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-3.8-flash`; `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-4-hydrogen` |
+| Other (`other`) | `AI_API_KEY` (not needed on this computer) | `AI_BASE_URL`, yours, e.g. `http://localhost:11434/v1` | `AI_MODEL`, yours, e.g. `llama3.1` (examples only) |
 
-**Model and cost.** Plain HTTPS to the Messages API (`urllib`, no SDK, no new dependency), model
-`claude-opus-5-5` by default (the current default model of Anthropic's own guidance, Nov 2026) at effort
-`low`, with JSON-schema structured output and Anthropic's server-side refusal fallback. `AI_MODEL` on the
-Connect tab picks another, such as `claude-haiku-5-5`, about a fortieth of the price. A rough estimate, not
-measured: a layout read is one small request, and a batch of 40 narrations is a few thousand tokens in and
-out, so a few US cents per batch on the default model and a fraction of a cent on Haiku. One timeout of 120
-seconds, one retry on 429 or 5xx.
+`AI_MODEL` overrides the default for any of them; the Connect tab's model box takes a typed name as well as the
+list. Each service has its own key line, so a key is never sent to another service, and `AI_BASE_URL` counts
+for `other` only. The page has one key box (write-only) and saves the key under the right name. "Test AI" sends
+one fixed question ("reply with ok", no statement data) through the chosen service and says in plain English
+whether it worked, with a fix if not (key refused, wrong address or model name, nothing answering, rate limit).
 
-**Not verified.** Live calls to Anthropic's API have not been made: the reader was built and tested with a
-fake model only (`tests/test_ai.py`, `tests/test_ui_connect.py`). The ICICI, SBI and Axis test statements in
-`tests/fixtures/` are hand-made from secondary research notes, marked so in their first line, and use invented
-people; no real statement of those banks has been through it.
+**A model on your own computer.** Choose Other, address `http://localhost:11434/v1` (Ollama's
+OpenAI-compatible address), a model you have pulled (`ollama pull llama3.1`), no key. Then no narration leaves
+the computer at all, and the consent text says so. Any other address must be `https://`; a plain `http://` one
+is refused unless it is on this computer.
+
+**What it never does.** It never chooses a loan, posts, approves or changes an outcome, whichever service
+read the statement. Its fields only fill a blank that the rules left (`matcher.match.decide(..., extracted)`),
+and the rules then decide exactly as with a name they read themselves: the exact instalment amount, a due date
+within 5 days, one borrower who fits, no look-alike owing the same. It never overrides a rule's reading. A name
+or loan account must appear word for word in the narration and a reference must appear exactly, or it is
+dropped. Amount, date and txn_id always come from the statement's own columns. If the model's answer is
+malformed, cut off, refused, or the service does not answer, the line takes the rules' path and, if they cannot
+read it, goes to a person. Every reason that rests on a field the model read says "(read by the AI reader)" in
+the decision and the audit trail.
+
+**Privacy.** Before the first use the page shows what is sent, to whom and with which model, and asks for a
+tick, for example "I understand narration text, which can include people's names, is sent to Google's Gemini
+API (model gemini-3.8-flash)". The tick is stored in `data\ai_consent.json` with the provider (and, for Other,
+the address); **changing provider, or the address of Other, asks again**. Without the tick no request is made.
+Sent: for the layout, the first 20 rows with every digit replaced by 9 (column names and narration words go;
+no amount, balance, date value or account number); for narrations, only the narration text of lines the rules
+could not read. Never sent: amounts, balances, account numbers from other columns, anything from `.env`. The key
+goes only in the service's own header (`x-api-key` for Claude, `Authorization: Bearer` for the others); it is
+never shown on the page, put in a response or log, or committed (`.env` is git-ignored).
+
+**Quality of the model.** A weaker or smaller model (a small local one especially) reads fewer narrations and
+fewer layouts correctly. That costs you time, never a wrong posting: whatever it gets wrong or leaves out is
+dropped by the same checks and the line goes to the review queue. So the measure of how well a model reads a
+given bank is the review-queue count: run the same statement with each model you are considering and keep the
+one that leaves the fewest lines for a person at a price you accept.
+
+**How it talks to each service.** Plain HTTPS with `urllib` (no SDK, no new dependency). Claude: the Messages
+API with JSON-schema structured output at effort `low` and Anthropic's server-side refusal fallback. The other
+three: OpenAI-style chat completions (`/chat/completions`), asking for a `json_schema` response format, then
+(if the service answers 400 or 422) JSON mode, then plain "reply with JSON only" with the schema in the prompt;
+our own parser strips a code fence or a sentence around the JSON, and the answer is then checked like any
+other. Only a finished answer is accepted (`end_turn` for Claude, `stop` for the others); a refusal or a
+cut-off one leaves the line unread. One timeout of 120 seconds, one retry on 429 or 5xx. Cost, rough and not
+measured: a layout read is one small request and a batch of 40 narrations is a few thousand tokens in and out,
+so a few US cents per batch on a flagship model and a fraction of a cent on a small one.
+
+**Not verified.** Live calls to any provider (Anthropic, OpenAI, Google, a local Ollama) have **not** been
+made: everything was tested with fake responses only (`tests/test_ai.py`, `tests/test_ai_providers.py`,
+`tests/test_ui_connect.py`). What was checked in the providers' own documentation on 2026-11-17 (page reads,
+not calls):
+
+- Gemini: the OpenAI-compatible base URL `https://generativelanguage.googleapis.com/v1beta/openai/` and the
+  model ids `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` (labelled
+  stable) and `gemini-4-hydrogen` (listed, no stability label). Google's page shows structured output only
+  through the OpenAI libraries, not the raw `response_format` field, so that field is **unverified** for Gemini;
+  the fallbacks to JSON mode and plain JSON are what protect against it.
+- OpenAI: the model ids `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna` as listed on its models page,
+  and that Chat Completions supports Structured Outputs and JSON mode. The exact nested `json_schema` request
+  fields and the `max_completion_tokens` name are from long-standing practice, **unverified** against the
+  current docs (the page shown used the newer Responses API form).
+- Claude: model ids and request shape as in the first build; not re-checked now.
+- Other: no preset; the example model names are **unverified**.
+
+The ICICI, SBI and Axis test statements in `tests/fixtures/` are hand-made from secondary research notes,
+marked so in their first line, and use invented people; no real statement of those banks has been through it.
 
 ## Terms
 
@@ -531,7 +579,7 @@ The agent reads loans and schedules from Fineract's API and writes one thing bac
    | `MIFOSX_USERNAME` | The agent's Fineract user | `mifos` (the sandbox admin) |
    | `MIFOSX_PASSWORD` | Its password | written by `start.ps1` |
    | `BANK` | Whose narrations your bank export has: `hdfc`, `icici`, `sbi` or `other` | `hdfc` |
-   | `ANTHROPIC_API_KEY`, `AI_MODEL` | Optional: the [AI statement reader](#ai-statement-reader) | not set |
+   | `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `AI_API_KEY` | Optional: the [AI statement reader](#ai-statement-reader) (which service, model, address for Other, and that service's key) | not set (Claude) |
    | `MIFOS_URL` | Optional. The Mifos web app's address, for the "Open in Mifos" links, if it is not the host in `MIFOSX_BASE_URL` | not set |
    | `MIFOSX_SKIP_TLS_VERIFY` | Optional. `true` only for an https test server with a self-signed certificate | not set |
 
