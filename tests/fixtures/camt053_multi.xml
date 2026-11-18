@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Made up, format details unverified against real bank files. Written from the public ISO 20022 camt.053
+     description as remembered. A namespace variant (version 12, with a prefix), two statements for two accounts
+     in one file, and a batch booking. Every person, account and reference here is invented. -->
+<c:Document xmlns:c="urn:iso:std:iso:20022:tech:xsd:camt.053.001.12">
+  <c:BkToCstmrStmt>
+    <c:GrpHdr><c:MsgId>FAKE-MULTI-01</c:MsgId><c:CreDtTm>2026-11-12T20:00:00+01:00</c:CreDtTm></c:GrpHdr>
+    <c:Stmt>
+      <c:Id>FAKE-MULTI-A</c:Id>
+      <c:Acct><c:Id><c:IBAN>NL00FAKE0000000001</c:IBAN></c:Id><c:Ccy>EUR</c:Ccy></c:Acct>
+      <c:Ntry>
+        <c:Amt Ccy="EUR">410.00</c:Amt>
+        <c:CdtDbtInd>CRDT</c:CdtDbtInd>
+        <c:Sts><c:Cd>BOOK</c:Cd></c:Sts>
+        <c:BookgDt><c:Dt>2026-11-12</c:Dt></c:BookgDt>
+        <c:AcctSvcrRef>FAKEMULTI-A1</c:AcctSvcrRef>
+        <c:NtryDtls><c:TxDtls>
+          <c:RltdPties><c:Dbtr><c:Pty><c:Nm>Sanne de Vries</c:Nm></c:Pty></c:Dbtr></c:RltdPties>
+          <c:RmtInf><c:Ustrd>termijn november | lening</c:Ustrd></c:RmtInf>
+        </c:TxDtls></c:NtryDtls>
+      </c:Ntry>
+      <c:Ntry>
+        <c:Amt Ccy="EUR">900.00</c:Amt>
+        <c:CdtDbtInd>CRDT</c:CdtDbtInd>
+        <c:Sts><c:Cd>BOOK</c:Cd></c:Sts>
+        <c:BookgDt><c:Dt>2026-11-12</c:Dt></c:BookgDt>
+        <c:AcctSvcrRef>FAKEMULTI-A2</c:AcctSvcrRef>
+        <c:AddtlNtryInf>SAMMELGUTSCHRIFT</c:AddtlNtryInf>
+        <c:NtryDtls>
+          <c:TxDtls><c:Amt Ccy="EUR">400.00</c:Amt><c:RltdPties><c:Dbtr><c:Pty><c:Nm>Pieter Jansen</c:Nm></c:Pty></c:Dbtr></c:RltdPties></c:TxDtls>
+          <c:TxDtls><c:Amt Ccy="EUR">500.00</c:Amt><c:RltdPties><c:Dbtr><c:Pty><c:Nm>Eva Bakker</c:Nm></c:Pty></c:Dbtr></c:RltdPties></c:TxDtls>
+        </c:NtryDtls>
+      </c:Ntry>
+    </c:Stmt>
+    <c:Stmt>
+      <c:Id>FAKE-MULTI-B</c:Id>
+      <c:Acct><c:Id><c:IBAN>NL00FAKE0000000002</c:IBAN></c:Id><c:Ccy>EUR</c:Ccy></c:Acct>
+      <c:Ntry>
+        <c:Amt Ccy="EUR">410.00</c:Amt>
+        <c:CdtDbtInd>CRDT</c:CdtDbtInd>
+        <c:Sts><c:Cd>BOOK</c:Cd></c:Sts>
+        <c:BookgDt><c:Dt>2026-11-12</c:Dt></c:BookgDt>
+        <c:AcctSvcrRef>FAKEMULTI-B1</c:AcctSvcrRef>
+        <c:NtryDtls><c:TxDtls>
+          <c:Refs><c:EndToEndId>E2E-DEVRIES-2</c:EndToEndId></c:Refs>
+          <c:RltdPties><c:Dbtr><c:Pty><c:Nm>Sanne de Vries</c:Nm></c:Pty></c:Dbtr></c:RltdPties>
+        </c:TxDtls></c:NtryDtls>
+      </c:Ntry>
+    </c:Stmt>
+  </c:BkToCstmrStmt>
+</c:Document>

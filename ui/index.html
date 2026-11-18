@@ -270,9 +270,11 @@
 <section id="statement" hidden>
   <h2>1. Choose your bank statement</h2>
   <div class="box">
-    <p>In your bank's net banking, download the account statement as <b>CSV</b> and choose it here. Leave it as the bank
+    <p>In your bank's net banking, download the account statement as <b>CSV</b>, or as <b>camt.053</b> (XML) or
+      <b>MT940</b> if your bank offers them (most banks in Europe and the UK do), and choose it here. Leave it as the bank
       made it: account details above the table and a summary below it are fine. Up to 5 MB.</p>
-    <p><input type="file" id="st-file" accept=".csv,text/csv,text/plain"> <span id="st-upload" class="soft"></span></p>
+    <p><input type="file" id="st-file" accept=".csv,.xml,.sta,.mt940,.txt,text/csv,text/plain,text/xml,application/xml">
+      <span id="st-upload" class="soft"></span></p>
   </div>
   <h2>2. Read it</h2>
   <div class="box">
@@ -289,7 +291,7 @@
     <div id="st-note"></div>
   </div>
   <div id="st-map" hidden>
-    <h2>3. Check the columns</h2>
+    <h2 id="st-map-title">3. Check the columns</h2>
     <div class="box">
       <p id="st-source" class="soft"></p>
       <div class="pickers" id="st-pickers"></div>
@@ -898,6 +900,7 @@ $("st-read").addEventListener("click", async () => {
   $("st-readstate").textContent = "";
   if (READ.error || READ.problem) return void $("st-note").replaceChildren(el("div", {class: "problem"}, READ.error || READ.problem));
   $("st-note").replaceChildren(...(READ.note ? [el("div", {class: "reason"}, READ.note)] : []));
+  if (READ.format) return renderStructured(READ);
   MAP = READ.map || {header_row: READ.rows.findIndex(r => r.filter(Boolean).length > 2), date: -1, date_format: "%d/%m/%y",
                      narration: -1, reference: -1, style: "two_columns", credit: -1, debit: -1, amount: -1, type: -1};
   $("st-source").textContent = {hdfc: "Found the HDFC layout by its column names.",
@@ -915,6 +918,7 @@ function picker(label, value, options, onchange, hint) {
 }
 
 function renderMap(check) {
+  $("st-map-title").textContent = "3. Check the columns";
   const rows = READ.rows, header = rows[MAP.header_row] || [];
   const columns = [["-1", "(none)"], ...header.map((name, i) => [String(i), `${i + 1}: ${name || "(no name)"}`])];
   const set = field => value => { MAP[field] = field === "style" || field === "date_format" ? value : Number(value); refresh(); };
@@ -950,7 +954,29 @@ function renderMap(check) {
   $("st-import").disabled = !check.counts;
 }
 
-const noRef = c => c.no_reference ? ` ${c.no_reference.length} credits have no reference and will be reviewed by a person (rows ${c.no_reference.join(", ")}).` : "";
+const noRef = (c, unit = "rows") => c.no_reference ? ` ${c.no_reference.length} credits have no reference and will be reviewed by a person (${unit} ${c.no_reference.join(", ")}).` : "";
+// camt.053 and MT940 only: what else the file held and was not imported, so no money is left out unseen.
+const skipped = c => c.reversals === undefined ? "" : (c.reversals ? `, ${c.reversals} reversals or returns skipped (not credits)` : "")
+  + (c.pending ? `, ${c.pending} not yet booked skipped` : "") + (c.empty ? `, ${c.empty} with no amount skipped` : "");
+
+// A camt.053 or MT940 file names its own fields: no columns to choose and no AI. Shows what would be imported.
+function renderStructured(read) {
+  MAP = null;
+  $("st-map-title").textContent = "3. Check what will be imported";
+  if ([...$("st-bank").options].some(o => o.value === read.format)) $("st-bank").value = read.format;
+  $("st-source").textContent = `Read as ${read.name}. The date, amount, payer and reference come from the file's own fields: ` +
+    "there are no columns to choose and no AI reader is used. Check the first lines below.";
+  $("st-pickers").replaceChildren();
+  $("st-preview").replaceChildren(el("tr", {}, ...["Date", "Amount", "Payer", "Narration (payer | remittance | account | channel)", "Reference"]
+      .map(h => el("th", {}, h))),
+    ...read.sample.map(l => el("tr", {}, el("td", {}, l.date), el("td", {class: "num"}, l.amount),
+      el("td", {}, l.payer || "(none: a person will check it)"), el("td", {title: l.narration}, l.narration), el("td", {}, l.txn_id))));
+  const c = read.counts;
+  $("st-check").replaceChildren(el("div", {class: "done"},
+    `Reads every entry: ${c.rows} entries, ${c.credits} credits to import, ${c.debits} debits skipped${skipped(c)}.` + noRef(c, "entries")));
+  $("st-import").disabled = false;
+  $("st-map").hidden = false;
+}
 
 for (const [id, name] of [["st-date-order", "DATE_ORDER"], ["st-number-format", "NUMBER_FORMAT"]]) {
   $(id).addEventListener("change", async () => {
@@ -976,7 +1002,7 @@ $("st-import").addEventListener("click", async () => {
     return void $("st-result").replaceChildren(el("span", {class: "problem"}, result.error || result.problem));
   const c = result.done;
   $("st-result").replaceChildren(el("span", {class: "done"},
-    `Imported ${c.credits} credits (${c.debits} debits skipped).${noRef(c)} Next: the Run tab.`));
+    `Imported ${c.credits} credits (${c.debits} debits skipped${skipped(c)}).${noRef(c, c.reversals === undefined ? "rows" : "entries")} Next: the Run tab.`));
   const s = await call("/api/settings");
   if (!s.error) showSettings(s);
   loadRun();

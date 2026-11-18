@@ -1,0 +1,24 @@
+# Made up, format details unverified against real bank files. Written from the public SWIFT MT940 description
+# as remembered; every person, account and reference here is invented. Two statements in one file, :86: as
+# plain free text (one in the /NAME/ style, which the importer keeps as free text).
+:20:FAKE-UK-940-1
+:25:000000/99990001
+:28C:1/1
+:60F:C261109GBP5000,00
+:61:2611101110C312,40NTRF0001//FAKEUK-940-01
+FASTER PAYMENT
+:86:OLIVER BENNETT NOV INSTALMENT
+:61:2611101110D60,00NDDTNONREF//FAKEUK-940-02
+:86:DIRECT DEBIT INSURANCE
+:62F:C261110GBP5252,40
+-
+:20:FAKE-UK-940-2
+:25:000000/99990001
+:28C:2/1
+:60F:C261110GBP5252,40
+:61:2611111111RC40,00NTRFNONREF//FAKEUK-940-03
+:86:RETURNED PAYMENT
+:61:2611111111C95,00NTRFINV 55//FAKEUK-940-04
+:86:/ORDP//NAME/Grace Okafor/REMI/USTD//loan 4472/
+:62F:C261111GBP5307,40
+-

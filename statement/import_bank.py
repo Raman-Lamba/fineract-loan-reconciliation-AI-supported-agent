@@ -2,6 +2,7 @@
 
 Run:  python -m statement.import_bank <export.csv> [--bank hdfc] [--out data/bank_statement.csv]
       (--bank icici, sbi or other: the column map confirmed for that file on the page's Statement tab)
+      A camt.053 (XML) or MT940 file is told by its content and read by statement.import_structured instead.
 
 Writes `txn_id, date, amount, narration`, credits only, in the export's order. It never drops a money
 line quietly: a credit whose amount or date it cannot read stops the import with the row number, and
@@ -57,6 +58,16 @@ def _date(cell: str, formats=DATE_FORMATS, probe: dict | None = None, row: int =
         except ValueError:
             pass
     return ""
+
+
+def noref_id(day: str, amount: str, narration: str, seen: dict) -> str:
+    """The id of a credit with no bank reference. Kept, not refused: the matcher queues every NOREF line for a
+    person, who decides it. The id is stable (same line, same id on a re-import) and `seen` (one dict per
+    statement) counts identical-looking lines so they stay apart."""
+    same = (day, amount, narration)
+    seen[same] = seen.get(same, 0) + 1
+    digest = hashlib.sha256("|".join((*same, str(seen[same]))).encode()).hexdigest()[:8]
+    return f"{NO_REFERENCE}{day}-{digest}"
 
 
 def _amount(cell: str, row: int, column: str, settings: Settings = DEFAULT, probe: dict | None = None) -> Decimal:
@@ -203,12 +214,7 @@ def _convert(export, bank, cmap, settings, probe=None) -> tuple[list[dict], dict
             raw = found.pop() if len(found) == 1 else ""
         txn_id = raw.lstrip("0")
         if not txn_id:
-            # Kept, not refused: the matcher queues every NOREF line for a person, who decides it. The id is
-            # stable (same row, same id on a re-import) and the position keeps identical-looking rows apart.
-            same = (day, f"{money:.{settings.minor}f}", narration)
-            seen[same] = seen.get(same, 0) + 1
-            digest = hashlib.sha256("|".join((*same, str(seen[same]))).encode()).hexdigest()[:8]
-            txn_id = f"{NO_REFERENCE}{day}-{digest}"
+            txn_id = noref_id(day, f"{money:.{settings.minor}f}", narration, seen)
             counts.setdefault("no_reference", []).append(n)
         elif raw_refs.setdefault(txn_id, raw) != raw:
             raise ValueError(f"row {n}: references {raw_refs[txn_id]!r} and {raw!r} differ only in leading "
@@ -226,6 +232,14 @@ def record(out: Path, bank: str):
     page's Run tab reads them with the right FORMATS entry. A statement with no note is the synthetic one."""
     digest = hashlib.sha256(out.read_bytes()).hexdigest()
     (out.parent / "statement.json").write_text(json.dumps({"bank": bank, "sha256": digest}))
+
+
+def write_statement(out: Path, lines: list[dict], bank: str):
+    with out.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(lines[0]))
+        writer.writeheader()
+        writer.writerows(lines)
+    record(out, bank)
 
 
 def recorded_bank(out: Path) -> str:
@@ -253,8 +267,29 @@ def main():
     parser.add_argument("--env", type=Path, default=Path(__file__).resolve().parents[1] / ".env",
                         help="the .env holding the locale settings (currency, date order, number format)")
     args = parser.parse_args()
+    from statement import import_structured  # here: it imports this module
     try:
         settings = from_env(args.env)
+        # camt.053 and MT940 are told by their content, whatever --bank says; their narrations are read as that format.
+        found = import_structured.read_bytes(args.export.read_bytes(), settings)
+        if found:
+            args.bank, lines, counts = found
+            if not lines:
+                raise ValueError("no credit entries found")
+    except (ValueError, OSError) as problem:
+        sys.exit(f"REFUSED, nothing written. {args.export}: {problem}")
+    if found:
+        write_statement(args.out, lines, args.bank)
+        print(f"entries read: {counts['rows']} credits kept: {counts['credits']} debits skipped: {counts['debits']} "
+              f"reversals skipped: {counts['reversals']} entries without a reference: {len(counts.get('no_reference', []))}"
+              + (f" not yet booked, skipped: {counts['pending']}" if counts["pending"] else "")
+              + (f" zero amounts skipped: {counts['empty']}" if counts["empty"] else ""))
+        if counts.get("no_reference"):
+            print(f"{len(counts['no_reference'])} credits had no bank reference; they will go to the review queue "
+                  f"(entries {', '.join(map(str, counts['no_reference']))})")
+        print(f"{import_structured.NAMES[args.bank]} {args.export} -> {args.out}")
+        return
+    try:
         cmap = None
         if args.bank not in LAYOUTS:
             cmap = confirmed(args.export, args.out.parent / "layouts.json")
@@ -268,11 +303,7 @@ def main():
             raise ValueError("no credit rows found")
     except ValueError as problem:  # includes a file that is not UTF-8
         sys.exit(f"REFUSED, nothing written. {args.export}: {problem}")
-    with args.out.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(lines[0]))
-        writer.writeheader()
-        writer.writerows(lines)
-    record(args.out, args.bank)
+    write_statement(args.out, lines, args.bank)
     print(f"rows read: {counts['rows']} credits kept: {counts['credits']} debits skipped: {counts['debits']}"
           + (f" rows with no amount skipped: {counts['empty']}" if counts["empty"] else ""))
     if counts.get("no_reference"):

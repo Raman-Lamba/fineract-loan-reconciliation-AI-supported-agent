@@ -33,6 +33,10 @@ FORMATS = {
     "hdfc": [("UPI-", "-", 1), ("NEFT CR-", "-", 2), ("IMPS-", "-", 2)],
     "icici": [("UPI/", "/", 3), ("INF/NEFT/", "/", 4), ("MMT/IMPS/", "/", 4)],
     "sbi": [("NEFT-CR-", "-", 3), ("IMPS-", "-", 2)],
+    # statement.import_structured writes `payer name | remittance | account | channel`: the name is the
+    # statement's own payer field (empty if the file has none), so these are ours, not a bank's guessed layout.
+    "camt053": [("", "|", 0)],
+    "mt940": [("", "|", 0)],
     "other": [],  # a bank with no entry: names come only from the AI reader (ai.narration), if it is used
 }
 NO_REFERENCE = "NOREF-"  # the prefix statement.import_bank gives a credit that has no bank reference

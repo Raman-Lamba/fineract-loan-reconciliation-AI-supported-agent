@@ -4,8 +4,8 @@ Run:  python -m ui.serve [--port 8000] [--demo] [--open] [--env FILE] [--data DI
       (or double-click Start.bat; designs: docs/superpowers/specs/2026-11-16-ui-design.md and
       2026-11-17-ai-reader-design.md)
 
-Tabs: Connect writes .env; Statement uploads a bank CSV, finds its columns and imports it; Run reads the
-loans, matches and (after an explicit confirmation) posts the clear lines; Review is a second way to fill in
+Tabs: Connect writes .env; Statement uploads a bank CSV (and finds its columns) or a camt.053 or MT940 file,
+and imports it; Run reads the loans, matches and (after an explicit confirmation) posts the clear lines; Review is a second way to fill in
 data/queue.csv: a click writes the person's decision into that file, as Excel would, and then runs
 review.apply on that one row. Every step calls the same code as the command-line modules.
 
@@ -43,7 +43,8 @@ from review import build as queue_file
 from review import report
 from review.suggest import suggest
 from statement.fetch_schedules import fetch, list_loans
-from statement.import_bank import convert, record, recorded_bank
+from statement import import_structured as structured
+from statement.import_bank import convert, recorded_bank, write_statement
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_UPLOAD = 5_000_000  # bytes of statement text; a year of a busy account's CSV is well under this
@@ -491,10 +492,14 @@ def upload(body: dict) -> dict:
     if "\0" in text or text.startswith("PK"):
         return {"problem": "This is not a CSV file (it looks like an Excel or zip file). In your bank's net banking "
                            "choose CSV, or open it in Excel and use Save As > CSV UTF-8."}
+    try:
+        fmt = structured.detect(text)
+    except ValueError as problem:
+        return {"problem": f"This file cannot be used: {problem}."}
     rows = ai_layout.rows_of(text)
     (files.DATA / "bank_export.csv").write_text(text, encoding="utf-8", newline="")
-    return {"done": f"Saved {body.get('name') or 'the file'} as data\\bank_export.csv ({len(rows)} rows).",
-            "rows": len(rows)}
+    kind = f" ({len(rows)} rows)." if fmt == "csv" else f". It is {structured.NAMES[fmt]}."
+    return {"done": f"Saved {body.get('name') or 'the file'} as data\\bank_export.csv{kind}", "rows": len(rows)}
 
 
 def _export() -> str:
@@ -531,12 +536,31 @@ def preview(cmap: dict | None, text: str, settings: loc.Settings = loc.DEFAULT) 
     return {"counts": counts, "sample": lines[:5]}
 
 
+def _structured(text: str, settings: loc.Settings) -> dict | None:
+    """What a camt.053 or MT940 file would import (its own fields: no columns to choose, no AI), or None for a CSV."""
+    try:
+        found = structured.read(text, settings)
+    except ValueError as problem:
+        return {"problem": f"This file cannot be imported: {problem}."}
+    if found is None:
+        return None
+    fmt, lines, counts = found
+    if not lines:
+        return {"problem": f"No credit entries found in this {structured.NAMES[fmt]} file."}
+    return {"format": fmt, "name": structured.NAMES[fmt], "counts": counts,
+            "sample": [{**line, "payer": payer_name(line["narration"], fmt)} for line in lines[:20]]}
+
+
 def read_statement(env: Path, use_ai: bool, opener=None) -> dict:
-    """Finds the columns of data/bank_export.csv: HDFC, a map confirmed before, or (if asked) the AI reader."""
+    """Reads data/bank_export.csv: a camt.053 or MT940 by its own fields; a CSV's columns from HDFC's, a map
+    confirmed before, or (if asked) the AI reader."""
     text = _export()
     if not text:
         return {"problem": "Choose your bank statement file first (step 1)."}
     settings = env_settings(env)
+    known = _structured(text, settings)
+    if known is not None:
+        return known
     rows = ai_layout.rows_of(text)
     layouts = files.DATA / "layouts.json"
     out = {"rows": rows[:60], "map": ai_layout.hdfc_map(rows), "source": "hdfc", "note": ""}
@@ -560,11 +584,23 @@ def read_statement(env: Path, use_ai: bool, opener=None) -> dict:
 
 
 def import_statement(env: Path, body: dict) -> dict:
-    """Writes data/bank_statement.csv from the confirmed map, remembers the map, and the bank in .env."""
+    """Writes data/bank_statement.csv from the confirmed map, remembers the map, and the bank in .env.
+    A camt.053 or MT940 file needs no map: its format is the bank, whatever the body says."""
     cmap, bank = body.get("map"), body.get("bank")
+    text = _export()
+    try:
+        found = structured.read(text, env_settings(env)) if text else None
+    except ValueError as problem:
+        return {"problem": f"Nothing was imported. {problem}"}
+    if found:
+        fmt, lines, counts = found
+        if not lines:
+            return {"problem": "Nothing was imported: no credit entries found."}
+        write_statement(files.DATA / "bank_statement.csv", lines, fmt)
+        merge_env(env, {"BANK": fmt})
+        return {"done": counts, "bank": fmt}
     if bank not in BANKS:
         return {"problem": f"Choose which bank this is ({', '.join(BANKS)})."}
-    text = _export()
     if not text or not isinstance(cmap, dict):
         return {"problem": "Choose your bank statement file and read it first."}
     settings = env_settings(env)
@@ -574,15 +610,11 @@ def import_statement(env: Path, body: dict) -> dict:
         return {"problem": f"Nothing was imported. {problem}"}
     if not lines:
         return {"problem": "Nothing was imported: no credit rows found."}
-    out = files.DATA / "bank_statement.csv"
-    with out.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(lines[0]))
-        writer.writeheader()
-        writer.writerows(lines)
+    # statement.json, written with it, notes which bank's narrations it holds, for the Run tab
+    write_statement(files.DATA / "bank_statement.csv", lines, bank)
     if not hdfc:
         ai_layout.save(ai_layout.check(cmap, text, settings)[0], files.DATA / "layouts.json")
     merge_env(env, {"BANK": bank})
-    record(out, bank)  # which bank's narrations this statement holds, for the Run tab
     return {"done": counts, "bank": bank}
 
 

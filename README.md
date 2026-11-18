@@ -14,11 +14,11 @@ All data is synthetic. This is a portfolio project, not a production or regulato
 |---|---|---|
 | **Use it without typing anything** | Double-click **`Start.bat`**, then follow the tabs in the browser: Connect, Statement, Run, Review ([No-code setup](#no-code-setup-startbat)) | Windows 10/11, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **See the page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
-| **Check the code works** | `python -m unittest discover -s tests` (347 tests, about 45 seconds) | Python 3.11+ only |
+| **Check the code works** | `python -m unittest discover -s tests` (372 tests, about 50 seconds) | Python 3.11+ only |
 | **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **Connect it to your own Fineract** | The page's Connect tab, or [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
 | **Use it outside India** | The Connect tab's "Country and money" box: pick a country, check what it fills in, change what is wrong ([Using it outside India](#using-it-outside-india)) | A statement in one currency, in the layout of your bank |
-| **Feed it your own bank statement** | The page's Statement tab, or [Use your own bank statement](#use-your-own-bank-statement) | A CSV export: HDFC is found by itself; any other layout by choosing its columns, or by the optional AI reader |
+| **Feed it your own bank statement** | The page's Statement tab, or [Use your own bank statement](#use-your-own-bank-statement) | A CSV export (HDFC is found by itself; any other layout by choosing its columns, or by the optional AI reader), or a camt.053 (XML) or MT940 file, read by its own fields ([Bank statement formats](#bank-statement-formats)) |
 
 The scripts are PowerShell, so the full sandbox run is Windows-only today. The Python modules themselves are
 plain standard-library code; on macOS or Linux you can run them one at a time against any Fineract
@@ -325,7 +325,8 @@ The no-typing way is the page's Statement tab ([No-code setup](#no-code-setup-st
 1. In your bank's net banking, download the account statement as CSV.
 2. Save it as `data\bank_export.csv`. Leave it as the bank made it: the account details above the table and
    the summary below it are skipped.
-3. Add a line `BANK=hdfc` to `.env` (whose narrations the export has: `hdfc`, `icici`, `sbi` or `other`). For any
+3. Add a line `BANK=hdfc` to `.env` (whose narrations the export has: `hdfc`, `icici`, `sbi` or `other`; a camt.053 or
+   MT940 file sets `camt053` or `mt940` itself, see [Bank statement formats](#bank-statement-formats)). For any
    bank but `hdfc` the columns come from a map confirmed once on the Statement tab; without one the import stops
    and says so.
 4. Run `.\start.ps1 -Reconcile`. It prints `Statement source: data\bank_export.csv`, then imports, matches,
@@ -382,6 +383,37 @@ debits skipped: 41` and gave the same txn_id, date and amount on all 1,654 lines
 on it made the same decision on every line as on the synthetic statement: 1,348 posts, 0 wrong, 100.0%
 auto-posted, 0 duplicates posted. `posting.run` then posted nothing (all 1,348 already in the ledger).
 
+## Bank statement formats
+
+The Statement tab and `python -m statement.import_bank <file>` take three formats. Which one a file is, is read from its
+content, not its name (`.csv`, `.xml`, `.sta`, `.mt940` and `.txt` can all be chosen). All three become the same
+`data\bank_statement.csv` (`txn_id, date, amount, narration`, credits only), so matching, posting and review work the same way.
+
+| Format | What it carries | How it is read |
+|---|---|---|
+| **CSV, any layout** | Whatever columns the bank chose; the payer's name is somewhere inside a free-text narration | HDFC's columns by their names; any other by a column map chosen once on the Statement tab (or proposed by the optional AI reader); names by the bank's line in `FORMATS` ([Use your own bank statement](#use-your-own-bank-statement)) |
+| **camt.053** (ISO 20022 XML, versions 02 to 12) | Per entry: credit or debit, reversal flag, booked or pending, booking and value date, amount and currency, the bank's reference (`AcctSvcrRef`), end-to-end id, the payer's name and IBAN (or UK sort code and account), remittance text or a structured creditor reference | Field by field. Debits, reversals and entries not yet booked are skipped and counted. |
+| **MT940** (SWIFT text) | Per `:61:` line: dates, credit/debit or reversal mark, amount, customer and bank reference; the `:86:` line after it holds the payer and remittance, in a bank's own dialect | The German `?nn` subfields give the payer's name (`?32`/`?33`), account (`?31`) and remittance; any other `:86:` is kept as free text with no name (the AI reader or a person reads it). The currency comes from the opening balance (`:60F:`). |
+
+For camt.053 and MT940 the narration is written as `payer name | remittance | account | channel`, and the Run tab reads the name
+from the first field (`BANK=camt053` or `BANK=mt940`, set by the import). The reference is the bank's own (camt `AcctSvcrRef`,
+else `TxId`, else `EndToEndId`; MT940 the bank reference after `//`, else the customer reference). A credit with none gets a
+`NOREF-` id as in a CSV and always goes to a person. The import prints `entries read`, `credits kept`, `debits skipped`,
+`reversals skipped` and `entries without a reference`, and the page shows the same counts with the first lines. A statement
+in a currency other than `CURRENCY` is refused with the entry named; a camt.052 or camt.054 file is refused with the list of
+supported formats. No AI service is used for these two formats.
+
+**Safety.** XML is read with Python's standard library only, after refusing any file with a `DOCTYPE` or `ENTITY` declaration
+(the "billion laughs" and external-entity attacks); files are capped at 20 MB (5 MB through the page) and 100,000 entries;
+nothing is fetched from the network.
+
+**Unverified.** Both readers and every test file in `tests/fixtures/` (`camt053_*.xml`, `mt940_*`) were written from the public
+format descriptions as remembered: the files are **made up, format details unverified against real bank files**, with made-up
+people. Banks differ in which optional fields they fill and in their `:86:` dialect. A real export from your own bank is the real
+test: import it, look at the preview (is the payer column filled?) and at the first review queue before trusting it with a real
+book. Batch bookings (several payments in one entry) are kept as one line for a person. Design:
+[docs/superpowers/specs/2026-11-18-camt-mt940-design.md](docs/superpowers/specs/2026-11-18-camt-mt940-design.md).
+
 ## Using it outside India
 
 Everything country-specific is a setting you type on the Connect tab's **Country and money** box (it is saved into `.env`
@@ -412,9 +444,9 @@ currency in `CURRENCY`; the files keep plain `1234.56` amounts with a dot and no
 test; a statement with a `Currency` column whose value differs from `CURRENCY` is refused with its row number. Nothing is converted.
 The page shows money with the browser's own currency formatting for the preset's locale, so grouping and the symbol follow it.
 
-**Not yet (later stages).** Stage B: importers for camt.053 and MT940 statements, which most banks outside India export instead of
-a CSV. Stage C: name conventions (the matcher still assumes a first name then a surname, and the `SCPL` loan-account prefix is the
-synthetic lender's). Until then a bank in another country needs a CSV whose columns you choose on the Statement tab.
+**Statements.** Stage B added camt.053 and MT940, which most banks outside India export instead of (or as well as) a CSV
+([Bank statement formats](#bank-statement-formats)). **Not yet (stage C):** name conventions (the matcher still assumes a first
+name then a surname, and the `SCPL` loan-account prefix is the synthetic lender's).
 The demo seed (`seed.load_fineract`) stays India-only: it creates INR and the four Indian payment types, for the sandbox only.
 
 **Not legal or compliance advice.** Co-lending rules and the partner's share differ by country and by agreement; the 80 is an

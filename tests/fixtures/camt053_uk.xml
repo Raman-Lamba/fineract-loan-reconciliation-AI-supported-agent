@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Made up, format details unverified against real bank files. Written from the public ISO 20022 camt.053
+     description as remembered (version 08 layout: Sts/Cd, Dbtr/Pty/Nm); every person, account and reference
+     here is invented. The payer's sort code and account number are in DbtrAcct/Id/Othr/Id. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>FAKE-UK-0001</MsgId><CreDtTm>2026-11-10T21:00:00Z</CreDtTm></GrpHdr>
+    <Stmt>
+      <Id>FAKE-UK-STMT-1110</Id>
+      <Acct><Id><Othr><Id>00000099990001</Id></Othr></Id><Ccy>GBP</Ccy></Acct>
+      <Ntry>
+        <Amt Ccy="GBP">312.40</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><DtTm>2026-11-10T09:14:00Z</DtTm></BookgDt>
+        <ValDt><Dt>2026-11-10</Dt></ValDt>
+        <AcctSvcrRef>FAKEUK-FP-0001</AcctSvcrRef>
+        <BkTxCd><Prtry><Cd>FASTER PAYMENTS RECEIPT</Cd></Prtry></BkTxCd>
+        <NtryDtls><TxDtls>
+          <Refs><EndToEndId>LOAN 4471</EndToEndId></Refs>
+          <RltdPties>
+            <Dbtr><Pty><Nm>Oliver Bennett</Nm></Pty></Dbtr>
+            <DbtrAcct><Id><Othr><Id>00000012345678</Id></Othr></Id></DbtrAcct>
+          </RltdPties>
+          <RmtInf><Ustrd>NOV INSTALMENT</Ustrd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="GBP">95.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>PDNG</Cd></Sts>
+        <ValDt><Dt>2026-11-11</Dt></ValDt>
+        <AcctSvcrRef>FAKEUK-FP-0002</AcctSvcrRef>
+        <NtryDtls><TxDtls>
+          <RltdPties><Dbtr><Pty><Nm>Grace Okafor</Nm></Pty></Dbtr></RltdPties>
+        </TxDtls></NtryDtls>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="GBP">60.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-11-10</Dt></BookgDt>
+        <AcctSvcrRef>FAKEUK-DD-0003</AcctSvcrRef>
+        <BkTxCd><Prtry><Cd>DIRECT DEBIT</Cd></Prtry></BkTxCd>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

@@ -148,6 +148,8 @@ EXAMPLES = {  # one narration per table entry, each naming RAMESH KUMAR
     ("icici", "MMT/IMPS/"): "MMT/IMPS/507296189749/emi/RAMESH KUMAR/SBIN0000001",
     ("sbi", "NEFT-CR-"): "NEFT-CR-SBINR507296189749-RAMESH KUMAR",
     ("sbi", "IMPS-"): "IMPS-507296189749-RAMESH KUMAR-EMI",
+    ("camt053", ""): "RAMESH KUMAR | emi sep | DE00999988880000000011 | SEPA",  # statement.import_structured's layout
+    ("mt940", ""): "RAMESH KUMAR | SVWZ+emi sep",
 }
 LOAN = {"loan_ref": "L1", "loan_id": 1, "account_no": "000000001", "client_id": 1, "firstname": "Ramesh",
         "lastname": "Kumar", "instalments": [{"due": "2026-09-05", "amount": 8450.0}]}
