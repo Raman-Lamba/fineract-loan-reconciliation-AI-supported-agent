@@ -121,8 +121,8 @@ Linux you can run them one at a time against any Fineract ([Full command-line ru
 ### Try the demo (no Docker, no Fineract)
 
 ```powershell
-git clone <this repository>
-cd Leverage
+git clone https://github.com/Raman-Lamba/fineract-loan-reconciliation-AI-supported-agent.git
+cd fineract-loan-reconciliation-AI-supported-agent
 python -m ui.serve --demo
 ```
 
@@ -494,7 +494,7 @@ The full details (model tables, what exactly is sent, how requests are made, wha
 
 ## Going global
 
-Everything country-specific is a setting, not a code change. Type it on the Connect tab's **Country and money** box (it is
+**Using it outside India:** everything country-specific is a setting, not a code change. The non-India presets are unverified starting points. Type it on the Connect tab's **Country and money** box (it is
 saved into `.env`). The defaults are India's, so a project with none of these lines behaves as an Indian one.
 
 | Setting | Meaning | Default |
