@@ -8,6 +8,8 @@ import json
 from datetime import date
 from pathlib import Path
 
+from matcher.names import tokens
+
 OUT = Path(__file__).resolve().parents[1] / "data" / "schedules.json"
 
 
@@ -34,9 +36,11 @@ def fetch(fc, ok) -> list[dict]:
         first, _, last = loan["clientName"].partition(" ")
         # loan_ref is the lender's own reference, Fineract's externalId. A loan without one is known by its
         # Fineract account number, so a book that never filled externalId in can still be reconciled.
+        # name_tokens: every word of the name, normalised (matcher.names), so a name of three or more words is
+        # compared whole; firstname and lastname stay as before for the pages and files that show them.
         out.append({"loan_ref": loan.get("externalId") or loan["accountNo"], "loan_id": loan["id"],
                     "account_no": loan["accountNo"], "client_id": loan["clientId"], "firstname": first,
-                    "lastname": last, "instalments": instalments})
+                    "lastname": last, "name_tokens": tokens(loan["clientName"]), "instalments": instalments})
     return sorted(out, key=lambda loan: loan["loan_ref"])
 
 

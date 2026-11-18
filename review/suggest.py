@@ -11,11 +11,11 @@ Design: docs/superpowers/specs/2026-11-17-suggestions-design.md
 """
 from __future__ import annotations
 
-import re
 from datetime import date
 from difflib import SequenceMatcher
 from functools import lru_cache
 
+from matcher import names
 from matcher.match import FORMATS, WINDOW_DAYS, _paise, payer_name
 
 LIMIT = 5
@@ -33,12 +33,17 @@ def _ratio(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+def _words(text: str) -> list[str]:
+    # matcher.names' normal form (no case, accents or titles), split at hyphens, without digits
+    return [part for word in names.tokens(text) for part in word.split("-") if part]
+
+
 def name_tokens(narration: str, bank: str = "synthetic") -> list[str]:
-    """The payer's name as lower-case words: the bank's name field if the rules read one, else the narration's words."""
+    """The payer's name as normalised words: the bank's name field if the rules read one, else the narration's words."""
     name = payer_name(narration, bank) if bank in FORMATS else ""
     if name:
-        return re.findall(r"[a-z]+", name.lower())
-    return [word for word in re.findall(r"[a-z]+", narration.lower()) if word not in NOT_NAMES]
+        return _words(name)
+    return [word for word in _words(narration) if word not in NOT_NAMES]
 
 
 def _surname(word: str, last: str) -> float:
@@ -61,11 +66,20 @@ def _first(word: str, first: str) -> float:
     return _misspelt(word, first)
 
 
-def name_match(words: list[str], first: str, last: str) -> tuple[float, float, str]:
-    """(surname score, first-name score, a plain label) for the best reading of `words` as this borrower."""
-    first, last = first.lower(), last.lower()
+def name_match(words: list[str], borrower: list[str], order: str = "western") -> tuple[float, float, str]:
+    """(surname score, first-name score, a plain label) for the best reading of `words` as this borrower (words, as
+    matcher.names.tokens gives them), with its given and family names as NAME_ORDER reads them."""
+    # The words as written and without particles (VAN DER BERG JAN reads as BERG JAN; DAS LAKSHM keeps Das).
+    core = [w for i, w in enumerate(words) if not (w in names.PARTICLES and i + 1 < len(words))]
+    readings = names.readings(borrower, order) or [(["".join(names.parts(borrower))], [], [])]
+    written = "".join(names.parts(borrower))
+    return max((_match(w, "".join(given), "".join(family), written) for w in (words, core)
+                for given, family, _ in readings), key=lambda m: 0.6 * m[0] + 0.4 * m[1])
+
+
+def _match(words: list[str], first: str, last: str, written: str) -> tuple[float, float, str]:
     if len(words) == 1 and len(words[0]) >= 6:  # RAMESHKUMA: the name run together and cut
-        whole = _ratio(words[0], (first + last)[:len(words[0])])
+        whole = _ratio(words[0], written[:len(words[0])])
         if whole >= 0.85:
             return whole, whole, "same name, written as one word"
     best = (0.0, 0.0)
@@ -95,16 +109,17 @@ def nearest(loan: dict, paise: int, day: date) -> dict | None:
     return {"due": inst["due"], "paise": _paise(inst["amount"]), "days": days}
 
 
-def suggest(line: dict, loans: list[dict], bank: str = "synthetic", exclude=(), limit: int = LIMIT) -> list[dict]:
+def suggest(line: dict, loans: list[dict], bank: str = "synthetic", exclude=(), limit: int = LIMIT,
+            order: str = "western") -> list[dict]:
     """Up to `limit` loans this line may be for, best first; [] when no loan is plausible. Loans in `exclude`
-    (the matcher's own candidates, already on the page) are left out."""
+    (the matcher's own candidates, already on the page) are left out. `order`: the NAME_ORDER setting."""
     words = name_tokens(line["narration"], bank)
     paise, day = _paise(line["amount"]), date.fromisoformat(line["date"])
     out = []
     for loan in loans:
         if loan["loan_ref"] in exclude:
             continue
-        s, f, label = name_match(words, loan["firstname"], loan["lastname"])
+        s, f, label = name_match(words, names.of_loan(loan), order)
         inst = nearest(loan, paise, day)
         equal = bool(inst) and inst["paise"] == paise and abs(inst["days"]) <= WINDOW_DAYS
         named = 0.6 * s + 0.4 * f

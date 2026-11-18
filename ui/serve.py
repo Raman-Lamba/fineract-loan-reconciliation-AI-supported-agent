@@ -54,8 +54,9 @@ SETTINGS = [("MIFOSX_BASE_URL", False), ("MIFOSX_TENANT_ID", False), ("MIFOSX_US
             ("MIFOSX_PASSWORD", True), ("MIFOS_URL", False), ("BANK", False), ("ANTHROPIC_API_KEY", True),
             ("AI_MODEL", False), ("AI_QUALITY", False), ("AI_PROVIDER", False), ("AI_BASE_URL", False),
             ("COUNTRY", False), ("CURRENCY", False), ("PARTNER_SHARE_PERCENT", False), ("DATE_ORDER", False),
-            ("NUMBER_FORMAT", False), ("CHANNELS", False), ("CO_LENDING", False)]
-LOCALE_NAMES = ("COUNTRY", "CURRENCY", "PARTNER_SHARE_PERCENT", "DATE_ORDER", "NUMBER_FORMAT", "CHANNELS", "CO_LENDING")
+            ("NUMBER_FORMAT", False), ("CHANNELS", False), ("CO_LENDING", False), ("NAME_ORDER", False)]
+LOCALE_NAMES = ("COUNTRY", "CURRENCY", "PARTNER_SHARE_PERCENT", "DATE_ORDER", "NUMBER_FORMAT", "CHANNELS", "CO_LENDING",
+                "NAME_ORDER")
 # "AI_API_KEY" is the form's one key box: it is saved under the chosen provider's own name (ai.client.PROVIDERS),
 # so a key typed for one provider is never sent to another.
 KEY_BOX = "AI_API_KEY"
@@ -229,13 +230,19 @@ def candidates(text: str, loans: dict) -> list[dict]:
     return out
 
 
-def _shortlist(row: dict, schedules: list[dict]) -> list[dict]:
+def name_order(env: Path | None) -> str:
+    """The NAME_ORDER setting (western when .env has none or a bad saved value: the page says so on Connect)."""
+    return loc.DEFAULT.name_order if env is None else locale_of(ai_client.read_env(env))[0].name_order
+
+
+def _shortlist(row: dict, schedules: list[dict], env: Path | None = None) -> list[dict]:
     """review.suggest's possible loans for a queue row, leaving out the matcher's own candidates (already shown)."""
     shown = {item.partition(" ")[0] for item in row["candidates"].split("; ") if item}
-    return suggest(row, schedules, recorded_bank(files.DATA / "bank_statement.csv"), exclude=shown)
+    return suggest(row, schedules, recorded_bank(files.DATA / "bank_statement.csv"), exclude=shown,
+                   order=name_order(env))
 
 
-def state() -> dict:
+def state(env: Path | None = None) -> dict:
     """What the Review tab shows: queue.csv as it is now, with local suggestions, and the ledger's totals."""
     schedules = _schedules()
     loans = {loan["loan_ref"]: loan for loan in schedules}
@@ -243,7 +250,7 @@ def state() -> dict:
     for row in queue_file.read_queue():
         problem, note = _problem_and_note(row["note"])
         queue.append({**row, "candidates": candidates(row["candidates"], loans), "problem": problem, "note": note,
-                      "suggestions": _shortlist(row, schedules)})
+                      "suggestions": _shortlist(row, schedules, env)})
     summary = {key: value if key == "payments" else str(value) for key, value in totals(files.read("ledger.csv")).items()}
     return {"queue": queue, "summary": {**summary, "queue": len(queue), "loans": len(loans)}}
 
@@ -256,7 +263,7 @@ def ask_ai(env: Path, body: dict, opener=None) -> dict:
     row = next((r for r in queue_file.read_queue() if r["txn_id"] == str(body.get("txn_id", ""))), None)
     if row is None:
         return {"problem": "this line is no longer in the queue. Reload the page."}
-    shortlist = _shortlist(row, _schedules())
+    shortlist = _shortlist(row, _schedules(), env)
     out = {"suggestions": shortlist, "ai": "", "note": ""}
     try:
         send = ai_client.sender(env, files.DATA, opener, kind="suggest", task="rank")
@@ -278,7 +285,7 @@ ORIGIN = re.compile(r"^\[suggested by [^\]]*\] ?")
 
 def _origin(env: Path, row: dict, ref: str, origin) -> str:
     """Where the chosen loan came from, for the audit: only if it holds. The approver is still the person."""
-    shortlist = _shortlist(row, _schedules())
+    shortlist = _shortlist(row, _schedules(), env)
     if origin not in ("local", "ai") or ref not in {s["loan_ref"] for s in shortlist}:
         return ""
     if origin == "ai":
@@ -411,7 +418,7 @@ def clean_settings(body: dict, current_provider: str = "") -> dict:
         if name in LOCALE_NAMES:
             if name == "CURRENCY":
                 value = value.upper()
-            elif name == "CO_LENDING":
+            elif name in ("CO_LENDING", "NAME_ORDER"):
                 value = value.lower()
             elif name == "NUMBER_FORMAT":
                 value = loc.number_format_of(value)
@@ -693,7 +700,7 @@ def run_match(env: Path, body: dict, opener=None) -> dict:
             log += [f"AI reader problem: {problem}" for problem in stats["errors"]]
         except ai_client.AIError as problem:
             log.append(f"AI reader not used: {problem}. The rules alone decided.")
-    decisions = matcher_run.run(bank, extracted, files.DATA)
+    decisions = matcher_run.run(bank, extracted, files.DATA, name_order(env))
     result = summary(decisions)
     log.append(f"Matched: {result['counts']['post']} would post, {result['counts']['queue']} go to a person, "
                f"{result['counts']['ignore']} ignored (repeated). Nothing has been posted.")
@@ -812,7 +819,7 @@ class Handler(BaseHTTPRequestHandler):
             page = PAGE.read_text(encoding="utf-8").replace("__CONFIG__", json.dumps(config).replace("<", "\\u003c"))
             self.reply(200, page, "text/html")
         elif self.path == "/api/state":
-            self.answer(state)
+            self.answer(lambda: state(env))
         elif self.path == "/api/settings":
             self.answer(lambda: settings_view(env))
         elif self.path == "/api/run":

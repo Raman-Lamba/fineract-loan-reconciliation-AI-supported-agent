@@ -1,4 +1,5 @@
-"""Locale settings: currency, co-lending or not, partner share, date order, number format and payment channels.
+"""Locale settings: currency, co-lending or not, partner share, date order, number format, payment channels and
+the order of a borrower's given and family names.
 
 They live in .env, are typed on the Connect tab, and default to India, so a project with no such lines
 behaves exactly as it did before they existed. A country preset only fills the boxes in as a starting point
@@ -13,8 +14,11 @@ from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from matcher.names import ORDERS
+
 DATE_ORDERS = ("auto", "day-first", "month-first")
 NUMBER_FORMATS = ("auto", "1,234.56", "1.234,56", "1 234,56", "1'234.56")
+NAME_ORDERS = ORDERS  # how a borrower's name splits into given and family name (matcher.names)
 
 # Starting points, not facts about a country. UNVERIFIED for every preset except India's channel names
 # (those come from the sandbox work): none was checked against a real bank export or a real Fineract of that
@@ -24,19 +28,19 @@ NUMBER_FORMATS = ("auto", "1,234.56", "1.234,56", "1 234,56", "1'234.56")
 # The channel lists are typical payment-scheme names, not what any one Fineract has as payment types.
 PRESETS = {
     "India": {"currency": "INR", "currency_name": "Indian Rupee", "date_order": "day-first", "number_format": "1,234.56",
-              "channels": "UPI,NEFT,IMPS,NACH", "ui_locale": "en-IN"},
+              "channels": "UPI,NEFT,IMPS,NACH", "ui_locale": "en-IN", "name_order": "western"},
     "United Kingdom": {"currency": "GBP", "currency_name": "Pound Sterling", "date_order": "auto", "number_format": "auto",
-                       "channels": "FASTER PAYMENTS,BACS,CHAPS,DIRECT DEBIT", "ui_locale": "en-GB"},
+                       "channels": "FASTER PAYMENTS,BACS,CHAPS,DIRECT DEBIT", "ui_locale": "en-GB", "name_order": "western"},
     "Eurozone (SEPA)": {"currency": "EUR", "currency_name": "Euro", "date_order": "auto", "number_format": "auto",
-                        "channels": "SEPA,SEPA INSTANT,SCT,SDD", "ui_locale": "en-IE"},
+                        "channels": "SEPA,SEPA INSTANT,SCT,SDD", "ui_locale": "en-IE", "name_order": "western"},
     "United States": {"currency": "USD", "currency_name": "US Dollar", "date_order": "auto", "number_format": "auto",
-                      "channels": "ACH,WIRE,ZELLE,CHECK", "ui_locale": "en-US"},
+                      "channels": "ACH,WIRE,ZELLE,CHECK", "ui_locale": "en-US", "name_order": "western"},
     "Brazil": {"currency": "BRL", "currency_name": "Brazilian Real", "date_order": "auto", "number_format": "auto",
-               "channels": "PIX,TED,DOC,BOLETO", "ui_locale": "pt-BR"},
+               "channels": "PIX,TED,DOC,BOLETO", "ui_locale": "pt-BR", "name_order": "western"},
     "Kenya": {"currency": "KES", "currency_name": "Kenyan Shilling", "date_order": "auto", "number_format": "auto",
-              "channels": "MPESA,PESALINK,EFT", "ui_locale": "en-KE"},
+              "channels": "MPESA,PESALINK,EFT", "ui_locale": "en-KE", "name_order": "western"},
     "Other": {"currency": "", "currency_name": "", "date_order": "auto", "number_format": "auto",
-              "channels": "", "ui_locale": "en"},
+              "channels": "", "ui_locale": "en", "name_order": "western"},
 }
 
 # Currencies whose minor unit is not 2 decimals: a table of exceptions, not the ISO list. UNVERIFIED against
@@ -56,6 +60,7 @@ class Settings:
     ui_locale: str = "en-IN"
     digits: int | None = None  # decimal places asked of Fineract; None: the table
     co_lending: bool = True  # False: no partner bank; partner_share is then 0, so every repayment is all lender's
+    name_order: str = "western"
 
     @property
     def minor(self) -> int:
@@ -112,9 +117,12 @@ def load(values: dict) -> Settings:
     colend = given("CO_LENDING").lower() or "yes"
     if colend not in ("yes", "no"):
         raise ValueError("CO_LENDING must be yes or no")
+    names = given("NAME_ORDER").lower() or preset["name_order"]
+    if names not in NAME_ORDERS:
+        raise ValueError(f"NAME_ORDER must be one of {', '.join(NAME_ORDERS)}")
     # No partner is the same split as a 0% share, so the one split() and the ledger columns stay as they are.
     return Settings(country, currency, share if colend == "yes" else Decimal(0), order, fmt, channels,
-                    preset["ui_locale"], co_lending=colend == "yes")
+                    preset["ui_locale"], co_lending=colend == "yes", name_order=names)
 
 
 def from_env(path: Path | None) -> Settings:
@@ -170,7 +178,7 @@ def view(settings: Settings) -> dict:
     return {"values": {"COUNTRY": settings.country, "CURRENCY": settings.currency,
                        "PARTNER_SHARE_PERCENT": _plain(settings.partner_share), "DATE_ORDER": settings.date_order,
                        "NUMBER_FORMAT": settings.number_format, "CHANNELS": ",".join(settings.channels),
-                       "CO_LENDING": "yes" if settings.co_lending else "no"},
+                       "CO_LENDING": "yes" if settings.co_lending else "no", "NAME_ORDER": settings.name_order},
             "ui_locale": settings.ui_locale, "ratio": settings.ratio, "minor": settings.minor,
             "words": words(settings), "presets": PRESETS,
-            "date_orders": DATE_ORDERS, "number_formats": NUMBER_FORMATS}
+            "date_orders": DATE_ORDERS, "number_formats": NUMBER_FORMATS, "name_orders": NAME_ORDERS}

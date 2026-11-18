@@ -26,7 +26,9 @@ sees in the queue), but it never turns a queue into a post on its own.
    [2026-11-16-bank-import-design.md](2026-11-16-bank-import-design.md)). Candidates are loans
    with an instalment of exactly this amount due within 5 days of the line date, whose borrower's name
    fits the payer name: surname equal or a prefix of it (truncated), first name equal, a prefix of 3+
-   letters, or its initial; either order; a single run-together token also fits.
+   letters, or its initial; either order; a single run-together token also fits. (Since stage C the fit is
+   `matcher/names.py`'s, which keeps these rules and adds other conventions and scripts:
+   [2026-11-18-names-design.md](2026-11-18-names-design.md).)
    - exactly one candidate, but another loan whose borrower has the same surname and first initial has
      the same amount due in the window -> queue with both (added while building: the answer key calls
      this ambiguous even when the line carries a full first name)

@@ -214,6 +214,13 @@
         <small>How the bank writes amounts. Auto refuses a column where every amount looks like 1.234.</small></label>
       <label>Payment channels <input name="CHANNELS" id="c-channels" placeholder="UPI,NEFT,IMPS,NACH" autocomplete="off">
         <small>Comma-separated names. A repayment whose narration holds one of them as a word is posted with the Fineract payment type of that name, if there is one.</small></label>
+      <label>Name order <select name="NAME_ORDER" id="c-name-order">
+          <option value="western">western: given name first (Ramesh Kumar, José García López)</option>
+          <option value="family-first">family name first (Yamada Taro, Kovács István)</option>
+          <option value="auto">auto: either order, whole names only (no initials or cut-short names)</option></select>
+        <small>How your borrowers' names are written in Fineract. Matching is conservative: accents, case and word order
+          are forgiven, nothing is transliterated between scripts, and a name that could fit two borrowers, or fits only
+          weakly, always goes to a person.</small></label>
     </div>
     <p id="c-locale-problem" class="problem" hidden></p>
     <div id="c-mode-warn" class="problem" hidden>
@@ -400,6 +407,7 @@
           <tr><td><code>MIFOSX_PASSWORD</code></td><td>Its password. Never shown on this page or in its log.</td><td>written by <code>start.ps1</code></td></tr>
           <tr><td><code>COUNTRY</code>, <code>CURRENCY</code>, <code>DATE_ORDER</code>, <code>NUMBER_FORMAT</code>, <code>CHANNELS</code></td><td>Where your lender is. The country is a starting point that fills the other boxes; change any of them. See "Using it outside India" in the README. Preset details are unverified.</td><td>India, INR, day-first, 1,234.56, UPI,NEFT,IMPS,NACH</td></tr>
           <tr><td><code>CO_LENDING</code></td><td><code>yes</code> or <code>no</code>: do you share your loans with a partner bank? With <code>no</code> there is no partner: every repayment is recorded as 100% the lender's (the ledger keeps its columns, with a partner share of 0.00), and the report is <code>data\repayments_report.csv</code> with no partner columns. A change applies to new payments only; payments already recorded are never rewritten, and the change is logged in <code>data\audit.csv</code>.</td><td><code>yes</code></td></tr>
+          <tr><td><code>NAME_ORDER</code></td><td><code>western</code> (given name first), <code>family-first</code> or <code>auto</code> (either order, whole names only): how borrowers' names are split into given and family name when a payer's name is matched. Ambiguous names always go to a person. See "Names from other countries" in the README.</td><td><code>western</code></td></tr>
           <tr><td><code>PARTNER_SHARE_PERCENT</code></td><td>Co-lending only: the partner bank's share, 0 to 100. 80 is an example, not a rule; ignored when <code>CO_LENDING</code> is <code>no</code>.</td><td>80</td></tr>
           <tr><td><code>BANK</code></td><td>Whose narrations your bank statement has: <code>hdfc</code>, <code>icici</code>, <code>sbi</code>,
             or <code>other</code> (names then come only from the AI reader)</td><td><code>hdfc</code></td></tr>
@@ -775,6 +783,7 @@ $("c-country").addEventListener("change", () => {
   $("c-date-order").value = preset.date_order;
   $("c-number-format").value = preset.number_format;
   $("c-channels").value = preset.channels;
+  $("c-name-order").value = preset.name_order;
 });
 $("c-forget").addEventListener("click", () => saveSettings(["AI_API_KEY"]));
 

@@ -429,6 +429,7 @@ exactly as before.
 | `DATE_ORDER` | `day-first`, `month-first` or `auto`. With `auto` the whole file decides: a date with a first part above 12 is day-first, a second part above 12 is month-first. If every date could be read both ways, the import is **refused** and you choose on the Statement tab; it never guesses. | day-first (India); `auto` for the other presets |
 | `NUMBER_FORMAT` | `1,234.56`, `1.234,56`, `1 234,56` (space, no-break or narrow no-break space), `1'234.56`, or `auto`. With `auto` the whole amount column decides (a value with both marks shows which is the decimal; a repeated mark is thousands; one mark and 1 or 2 digits is a decimal). If every amount is like `1.234` it could be either, so the import is **refused** and you choose. Indian grouping (`1,23,456.78`) is read for India. `(1,234.56)`, `-1.234,56`, `1,234.56-` and a Cr or Dr suffix are read as signs; credits and debits are told apart as before. | 1,234.56 (India); `auto` for the other presets |
 | `CHANNELS` | Comma-separated payment-type names. A narration containing one as a whole word is posted with the Fineract payment type of that name if there is one, else with none. **Test connection** lists which exist (informational, never a failure). | UPI,NEFT,IMPS,NACH |
+| `NAME_ORDER` | `western` (the first word of a borrower's name in Fineract is the given name), `family-first` (it is the family name: East Asia, Hungary) or `auto` (either; whole names only, no initials or cut-short names). How a payer's name is compared with borrowers' names ([Names from other countries](#names-from-other-countries)). | western (every preset) |
 
 **Presets are a starting point, not facts.** Each is one small table in `locale_settings.py`. None except India's was checked
 against a real bank export or a real Fineract: **unverified** are every non-India preset's channel names (typical scheme names,
@@ -445,12 +446,53 @@ test; a statement with a `Currency` column whose value differs from `CURRENCY` i
 The page shows money with the browser's own currency formatting for the preset's locale, so grouping and the symbol follow it.
 
 **Statements.** Stage B added camt.053 and MT940, which most banks outside India export instead of (or as well as) a CSV
-([Bank statement formats](#bank-statement-formats)). **Not yet (stage C):** name conventions (the matcher still assumes a first
-name then a surname, and the `SCPL` loan-account prefix is the synthetic lender's).
+([Bank statement formats](#bank-statement-formats)). Stage C added names written in other conventions and scripts
+([Names from other countries](#names-from-other-countries)). **Not yet:** the `SCPL` loan-account prefix is still the synthetic lender's.
 The demo seed (`seed.load_fineract`) stays India-only: it creates INR and the four Indian payment types, for the sandbox only.
 
 **Not legal or compliance advice.** Co-lending rules and the partner's share differ by country and by agreement; the 80 is an
 illustration. Check yours with whoever is responsible for it. The agent only records the split you tell it to.
+
+## Names from other countries
+
+Whether a payer's name fits a borrower is decided by `matcher/names.py` (standard library only, no network, no AI). It
+forgives what is the same person written differently, and nothing more; anything weaker is no fit, and two borrowers who
+both fit go to a person with both, as before. The same-surname, same-first-initial, same-amount look-alike rule stays,
+compared on the normalised names. `NAME_ORDER` (Connect tab) says which word of a borrower's Fineract name is the given name.
+
+| Handled | Example (borrower / payer as the bank wrote it) |
+|---|---|
+| Case, accents (Latin and Greek letters only) | José García / JOSE GARCIA |
+| Word order, as before | Ramesh Kumar / KUMAR RAMESH |
+| Titles at the start (Mr, Mrs, Ms, Dr, Prof, Sri, Shri, Smt and a few others) | Ramesh Kumar / SHRI RAMESH KUMAR |
+| Punctuation and apostrophes | Sean O'Brien / SEAN OBRIEN; Ramesh Kumar / R. KUMAR |
+| Particles (van, der, de, da, das, bin, ibn, al, von...) inside a name | Jan van der Berg / JAN BERG, JAN VANDERBERG |
+| Hyphenated and double surnames, several given names | Anne-Marie Dupont-Leclerc / A DUPONT LECLERC; José García López / J GARCIA LOPEZ |
+| An extra middle name or patronymic in the payer, when the given name is in full | Ivan Sidorov / IVAN PETROVICH SIDOROV |
+| Family name first (`NAME_ORDER=family-first`), with an initial | Yamada Taro / YAMADA T; Kovács István / KOVACS I |
+| Single-name people, exactly | Sukarno / SUKARNO |
+| Joint payers (A AND B, A & B, A / B, A, B), each person tried | Anita Nair / RAMESH KUMAR AND ANITA NAIR |
+| Non-Latin scripts, by whole words (no prefix or initial); Chinese, Japanese, Korean and Thai only as the whole name | Иван Сидоров / ИВАН СИДОРОВ, И СИДОРОВ; 山田 太郎 / 山田太郎 |
+
+**Deliberately not handled** (each goes to a person): transliteration between scripts (Ivan Sidorov is no fit for
+ИВАН СИДОРОВ; the local suggestions and the optional AI ranking on the Review tab can still help), nicknames (Bob for
+Robert), married or maiden names, a payer who drops a borrower's middle or second family name (Grace Akinyi Otieno /
+GRACE OTIENO), German UE for Ü (Müller / MUELLER: both spellings exist as different surnames). A payer with a company
+suffix (LTD, LLC, INC, GMBH, SA, AG, BV, SARL, PLC, PVT, LIMITED, OOO, KK and a few more) never fits a person, so a name
+the bank cut to end in SA is queued too. TRADERS or ENTERPRISES alone is not a company mark. `auto` is the strictest
+choice: it accepts either order but only whole names, so an initial never picks a borrower.
+
+**A wrong setting can only queue more.** On the Indian synthetic statement `western` gives 1,348 posts, 0 wrong (as before,
+same `data\decisions.csv` byte for byte); `family-first` 1,265 posts, 0 wrong; `auto` 706 posts, 0 wrong. `family-first` and
+`auto` keep the western look-alike check as well, so a look-alike is never missed because of the order chosen.
+
+**Unverified.** None of this was checked against real bank data from any of these countries: the title, particle and
+company lists are short lists from general knowledge, and every test person is made up. In particular unverified: how
+banks in each country write names in the payer field, whether your Fineract's client names put the family name first
+(Fineract's display name is built given name first, so `family-first` is for a book where staff typed the family name into
+the first-name box), that "Sri" is dropped as a title only when two more words follow (it is also an Indonesian given name),
+and Greek accent stripping. The AI statement reader still keeps a name only if it has Latin letters (unchanged). Design:
+[docs/superpowers/specs/2026-11-18-names-design.md](docs/superpowers/specs/2026-11-18-names-design.md).
 
 ## No partner bank (single lender)
 
@@ -486,7 +528,8 @@ can only fill in a payer's name or a loan account the rules could not read, and 
 A repeated txn_id is ignored; a loan account in the narration names the
 loan; otherwise the payer's name and the exact amount must fit one loan with an instalment due within 5
 days. Where the name sits in a narration comes from a small table, one entry per format and one line per
-bank (`FORMATS` in `matcher/match.py`; `--bank` picks the line, the synthetic layout by default). Two loans that fit, a look-alike borrower (same surname and first initial) owing the same amount, a
+bank (`FORMATS` in `matcher/match.py`; `--bank` picks the line, the synthetic layout by default). Whether a name fits is
+`matcher/names.py`'s call, with `NAME_ORDER` from `--env` ([Names from other countries](#names-from-other-countries)). Two loans that fit, a look-alike borrower (same surname and first initial) owing the same amount, a
 different amount, or no fit all go to the queue with the candidates and a reason. Rules:
 [docs/superpowers/specs/2026-11-16-matcher-design.md](docs/superpowers/specs/2026-11-16-matcher-design.md).
 

@@ -4,7 +4,7 @@ Pure: no I/O. Rules, in order (docs/superpowers/specs/2026-11-16-matcher-design.
 1. a txn_id already seen in this statement -> ignore
 2. a loan account in the narration (SCPL + 9 digits) -> that loan, if the amount is due
 3. the payer's name (read with the bank's entry in FORMATS) -> the one loan whose borrower and
-   instalment fit; anything else is queued
+   instalment fit; anything else is queued. Whether a name fits is matcher.names' call (NAME_ORDER).
 
 It never picks between loans: two that fit, or none, go to a person with the candidates and the reason.
 """
@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 from datetime import date
+
+from matcher import names
 
 WINDOW_DAYS = 5  # a payment counts for an instalment due up to this many days either side
 
@@ -63,23 +65,6 @@ def payer_name(narration: str, bank: str = "synthetic") -> str:
     return ""
 
 
-def name_fits(payer: str, first: str, last: str) -> bool:
-    """Whether a bank's version of a name could be this borrower: cut short, initial, swapped, run together."""
-    first, last, tokens = first.lower(), last.lower(), payer.lower().split()
-    if len(tokens) == 1:  # RAMESHKUMA: the first name in full, then some of the surname
-        rest = tokens[0][len(first):]
-        return tokens[0].startswith(first) and bool(rest) and last.startswith(rest)
-    if len(tokens) != 2:
-        return False
-
-    def fits(f: str, s: str) -> bool:
-        # A 10-character UPI name leaves at least 2 letters of the second word; 1 is too little to trust.
-        surname = len(s) >= 2 and last.startswith(s)
-        return surname and (f in (first, first[0]) or (len(f) >= 3 and first.startswith(f)))
-
-    return fits(tokens[0], tokens[1]) or fits(tokens[1], tokens[0])
-
-
 def _decision(line: dict, outcome: str, reason: str, loans: list[dict] = ()) -> dict:
     refs = [loan["loan_ref"] for loan in loans]
     if line["txn_id"].startswith(NO_REFERENCE) and outcome != "ignore":
@@ -89,12 +74,16 @@ def _decision(line: dict, outcome: str, reason: str, loans: list[dict] = ()) -> 
             "loan_ref": refs[0] if outcome == "post" else "", "reason": reason, "candidates": refs}
 
 
-def decide(lines: list[dict], schedules: list[dict], bank: str = "synthetic", extracted: dict | None = None) -> list[dict]:
+def decide(lines: list[dict], schedules: list[dict], bank: str = "synthetic", extracted: dict | None = None,
+           name_order: str = "western") -> list[dict]:
     """`extracted`: narration -> fields the AI reader read from it (payer_name, loan_account). A field is used
     only where the rules found nothing (no SCPL account, no name in the bank's FORMATS entry), and then
     exactly as the rules' own would be: it fills a blank, it never decides and never overrides a match.
+    `name_order`: the NAME_ORDER setting, how a borrower's name splits into given and family (matcher.names).
     """
     by_account = {loan["account_no"]: loan for loan in schedules}
+    borrower = {id(loan): names.of_loan(loan) for loan in schedules}
+    alike = {id(loan): names.alike_keys(borrower[id(loan)], name_order) for loan in schedules}
 
     def due_near(loan: dict, paise: int, day: date) -> str:
         """The due date of an instalment of exactly this amount within the window, or ''."""
@@ -136,15 +125,14 @@ def decide(lines: list[dict], schedules: list[dict], bank: str = "synthetic", ex
         if not payer:
             out.append(_decision(line, "queue", "no payer name or loan account in the narration"))
             continue
-        named = [loan for loan in schedules if name_fits(payer, loan["firstname"], loan["lastname"])]
+        named = [loan for loan in schedules if names.name_fits(payer, borrower[id(loan)], name_order)]
         fit = [loan for loan in named if due_near(loan, paise, day)]
         if len(fit) == 1:
             # A full name is not proof when a near-namesake owes the same amount: the answer key (and a
             # careful person) treats same surname + same initial + same amount as two possible borrowers.
             only = fit[0]
             fit += [loan for loan in schedules if loan is not only and due_near(loan, paise, day)
-                    and loan["lastname"].lower() == only["lastname"].lower()
-                    and loan["firstname"][:1].lower() == only["firstname"][:1].lower()]
+                    and alike[id(loan)] & alike[id(only)]]
         if len(fit) == 1:
             out.append(_decision(line, "post", f"'{payer}'{via} and the amount fit one loan; instalment due "
                                                f"{due_near(fit[0], paise, day)}", fit))
