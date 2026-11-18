@@ -14,7 +14,7 @@ All data is synthetic. This is a portfolio project, not a production or regulato
 |---|---|---|
 | **Use it without typing anything** | Double-click **`Start.bat`**, then follow the tabs in the browser: Connect, Statement, Run, Review ([No-code setup](#no-code-setup-startbat)) | Windows 10/11, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **See the page in 1 minute** | `git clone` this repo, then `python -m ui.serve --demo`, then open http://127.0.0.1:8000 | Python 3.11+ only. Made-up data in a temp folder; nothing is posted anywhere. |
-| **Check the code works** | `python -m unittest discover -s tests` (372 tests, about 50 seconds) | Python 3.11+ only |
+| **Check the code works** | `python -m unittest discover -s tests` (438 tests, about 70 seconds) | Python 3.11+ only |
 | **Run the whole thing on a sandbox** | `.\start.ps1 -Seed -Reconcile`, then `.\start.ps1 -Ui` (about 15 minutes the first time) | Windows 10/11 with PowerShell, Docker Desktop (WSL 2), Git for Windows, Python 3.11+ |
 | **Connect it to your own Fineract** | The page's Connect tab, or [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos) | A Fineract you can log in to |
 | **Use it outside India** | The Connect tab's "Country and money" box: pick a country, check what it fills in, change what is wrong ([Using it outside India](#using-it-outside-india)) | A statement in one currency, in the layout of your bank |
@@ -39,6 +39,7 @@ wrong, 273 queued for a person, ledger and partner report equal to Fineract.
 | 5 | Review queue a person edits in Excel, partner report, end-to-end demo | built |
 | UI | Local review page for the same queue, and a setup guide with a live connection test ([Review page](#review-page)) | built |
 | No-code + AI reader, stage one | Connect, Statement and Run tabs and `Start.bat`, so nobody types a command or edits a file; an optional AI reader (Claude, OpenAI, Gemini or any OpenAI-compatible service, a local one included) for statement layouts and narrations the rules do not know ([No-code setup](#no-code-setup-startbat), [AI statement reader](#ai-statement-reader)) | built; the AI reader tested with fake models only, no live provider call |
+| Learning from approvals | A person's approval remembers the payer's account (UPI ID, IBAN, account number; never a name) for that loan, so the next payment from it matches even with a mangled name, under the same gates; a shared account is turned off; a Learned payer accounts panel to turn links off and on ([Learning from approvals](#learning-from-approvals)) | built; measured on synthetic data only |
 | AI reader, stage two: suggestions | Each unclear line on the Review tab shows up to 5 likely loans found on this computer (no key, nothing sent), with the facts to check them; an optional "Ask AI to rank these" per line, after a second consent ([Suggestions for unclear lines](#suggestions-for-unclear-lines-stage-two)) | built; the AI ranking tested with fake models only |
 
 Connecting it to a Fineract and Mifos of your own: [Connect to your own Fineract and Mifos](#connect-to-your-own-fineract-and-mifos).
@@ -494,6 +495,71 @@ the first-name box), that "Sri" is dropped as a title only when two more words f
 and Greek accent stripping. The AI statement reader still keeps a name only if it has Latin letters (unchanged). Design:
 [docs/superpowers/specs/2026-11-18-names-design.md](docs/superpowers/specs/2026-11-18-names-design.md).
 
+## Learning from approvals
+
+A payer's name is a weak signal; the account the money came from is a stronger one. When a person approves a queued
+line for a loan, the agent can remember "this payer account belongs to this loan". The next payment from that account
+is then matched to that loan even if the name is mangled or someone else's, under the same rules as every other
+automatic post. Design: [docs/superpowers/specs/2026-11-18-learning-design.md](docs/superpowers/specs/2026-11-18-learning-design.md).
+
+**What counts as a payer account** (never a name): the UPI ID in a UPI narration (`name@bank`, exactly one in the line),
+and the payer's IBAN (only if its check digits are right) or account number in a camt.053 or MT940 statement (a UK sort
+code and account number included). NEFT, IMPS and other free text are not read: a long number there could be anybody's.
+UNVERIFIED: the HDFC and ICICI UPI layouts, the camt.053 and MT940 account fields, and UK accounts were checked against
+made-up files only.
+
+**How it works.** An approval that posted (on the Review tab, or `post` in `queue.csv` + `review.apply`) writes one row to
+`data\payer_links.csv` (`payer_key, loan_ref, learned_from_txn, approver, learned_at, status`) and an audit row
+`payer_learned`. On the next Match, a line from that account posts to that loan only if all of these hold: an instalment
+of exactly this amount is due on it within 5 days; the payer's name does not fit another borrower while not fitting this
+one; and no other loan the name (or the same family name and first initial) could be for owes the same amount then. The
+reason says so: `payer account vpa:****axis was approved for L0012 by Asha on 2026-11-18; instalment due 2026-12-05`.
+Otherwise the line is queued with the learned loan first and the reason ("... approved for L0012 before, but the
+amount/date does not fit"). Posting still checks the instalment live, and the duplicate guard is unchanged.
+
+**What it never does.** It never learns from an automatic post, a reject, a refused row (such as a typed loan_ref that
+is no loan), a failed or recovered post, the demo reviewer (`review.simulate`), or a line without a bank reference. A
+second approval to the same loan changes nothing. An approval to a different loan turns the account off (a shared or
+family account): it is not used again until a person turns it back on. Nothing is overwritten silently; every change is
+a new row. With no `payer_links.csv` the matcher decides exactly as before (`data\decisions.csv` byte for byte).
+
+**On the page.** Each approval has a box "Remember this payer account for this loan", ticked by default only when the
+account is new or already learned for a loan; the confirmation says what will be remembered or turned off. A queued
+line says when its account was approved before, or that it was approved for two loans and is off. The **Learned payer
+accounts** panel on the Review tab shows "N payer accounts learned, M lines auto-matched this way", every account
+(masked), its loans, status, who and when, with **Turn off** and **Turn on for <loan>** (your name in the Approver box is
+required; both are logged in the audit). In `queue.csv` write `no` in the `remember` column to approve without learning.
+
+**Undo.** Turn the account off in the panel (the line goes back to the name rule). To forget everything, delete
+`data\payer_links.csv`; the audit keeps what was learned and by whom.
+
+**Privacy.** `payer_links.csv` holds account identifiers: personal data. It lives in `data\` (not in git), is never
+sent to an AI (the AI reader and the "Ask AI" ranking are sent exactly what they were before; a test checks the ranker's
+request is identical with and without a learned account), and every reason, audit row and page shows an account masked
+to its kind and last 4 characters (`vpa:****axis`, `iban:****3000`). The page refers to an account by a hash, never the
+account. The narration shown on a queued line is still the bank's own text, as before.
+
+**Measured** on 18 Nov 2026 with `python -m review.measure_learning` (replays a statement in date order in memory; each
+queued line the answer key gives a loan is approved for it at once; only this command reads the answer key):
+
+| Statement | Lines with a payer account | Queue before -> after | Posted by a learned account (wrong) | Of those, the name rule would have queued | Queued because of a learned account (name rule would have posted) | Accounts turned off as shared |
+|---|---|---|---|---|---|---|
+| `data\bank_statement.csv` | 895 of 1,654 (54%), 188 accounts | 273 -> 324 | 2 (0) | 0 | 69 (51) | 67 of 90 |
+| repeat-payer statement | 920 of 1,654 (56%), 277 accounts | 273 -> 273 | 81 (0) | 2 | 41 (2) | 2 of 101 |
+
+Read it honestly: **on this synthetic data learning does not shrink the queue**, and it never posted to a wrong loan.
+In the default statement a UPI ID is just the payer's first name and a bank (`sanjay@oksbi`), shared by every Sanjay, so
+learned accounts collide, get turned off, or queue a namesake's clear payment: 51 more lines for a person. In the
+repeat-payer statement (`python -m statement.generate --repeat-payers` writes it to `data\repeat_payers\`; the default
+files stay byte for byte the same) every borrower pays from one UPI ID of their own, a borrower's payments by someone else
+come from one relative, and four families pay two loans from one shared ID. There 81 lines post by account, but the name
+rule would have posted 79 of them anyway: the synthetic names are mangled only in ways the name rule already handles, and
+the lines it queues are partial or overpaid amounts (no account helps), or look-alike borrowers owing the same amount,
+which the third check above deliberately still sends to a person. In a run without that check (and before the relative was made one person) the repeat-payer queue fell from
+273 to 246, but in the default statement one payment went to the wrong one of two Deepa Reddys sharing `deepa@paytm`: a
+shared account is exactly what one approval cannot rule out. The gain would come on a real feed where a regular payer's
+name is unreadable or is someone else's; that was not measured.
+
 ## No partner bank (single lender)
 
 A lender that does not co-lend sets **Do you share your loans with a partner bank?** to **No** on the Connect tab (or
@@ -601,11 +667,13 @@ the [Review page](#review-page) shows up to 5 likely loans for it
 **How a person works the queue**
 
 1. Open `data\queue.csv` in Excel.
-2. On each row you can decide, fill in the last four columns and leave the others alone:
+2. On each row you can decide, fill in the last columns and leave the others alone:
    - `decision`: `post` or `reject`
    - `loan_ref`: the loan to post to, such as `L0189` (not needed for `reject`)
    - `approver`: your name
    - `note`: why. It becomes the reason in the audit log, as `manual: <note>`.
+   - `remember` (optional): leave it empty to let a posted approval teach the payer's account for that loan, or write
+     `no` ([Learning from approvals](#learning-from-approvals)).
 3. Leave a row blank to decide it later. Save (keep the CSV format) and close Excel.
 4. Run `.venv\Scripts\python -m review.apply`. This posts money to Fineract, so `start.ps1` never runs it.
 
@@ -713,6 +781,8 @@ The page's tabs are Connect, Statement, Run, Review and Guide; the first three a
   duplicate guard, the configured split (80:20 by default), the ledger row and the audit row are the same code. Rows other people
   filled in Excel are left alone until someone runs `review.apply`. If `review.apply` refuses a row (unknown
   loan_ref, no approver, Fineract said no), the problem appears on the row and stays in the file.
+- **Learned payer accounts.** A queued line whose payer account was approved before says so, and each approval has a
+  "Remember this payer account for this loan" box ([Learning from approvals](#learning-from-approvals)).
 - **Summary strip.** Payments posted, the amount (in your currency, formatted by the browser for your locale), the partner bank's and the lender's share, queue size, and a
   Count button for loans in arrears (it reads every loan from Fineract and checks the ledger against it, as
   `posting.verify` does; about 20 seconds for 260 loans). The partner report link rebuilds

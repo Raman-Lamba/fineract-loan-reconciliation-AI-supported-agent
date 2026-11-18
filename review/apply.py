@@ -3,6 +3,8 @@
 Run:  python -m review.apply     (reads data/queue.csv; posts to Fineract; appends to ledger.csv and audit.csv)
 
 Safe to re-run: an applied line leaves the queue, and a txn_id in the ledger is never posted again.
+An approval that posted also teaches the payer's account for that loan (review.learn), unless the row's
+`remember` column says no.
 """
 from locale_settings import DEFAULT, Settings
 from matcher.match import NO_REFERENCE
@@ -66,7 +68,10 @@ def run(fc, ok, only: str | None = None, settings: Settings = DEFAULT) -> tuple[
     from datetime import datetime
 
     from posting.run import AUDIT, DATA, LEDGER, appender, read
+    from review import learn
     from review.build import QUEUE, read_queue, write_queue
+    from review.simulate import APPROVER as SIMULATED
+    from statement.import_bank import recorded_bank
 
     queue = read_queue()
     QUEUE.open("a").close()  # stops here, before any posting, if Excel still has the file open
@@ -89,6 +94,12 @@ def run(fc, ok, only: str | None = None, settings: Settings = DEFAULT) -> tuple[
             to_ledger(ledger)
         if audit:
             to_audit({"at": datetime.now().isoformat(timespec="seconds"), **audit})
+        # Only a person's post made now: never a recovered or failed one, nor the demo reviewer's (review.simulate).
+        if ledger and audit["action"] == "posted" and audit["approver"] != SIMULATED:
+            learned = learn.record(DATA, lines[row["txn_id"]], recorded_bank(DATA / "bank_statement.csv"),
+                                   ledger["loan_ref"], audit["approver"], row["remember"].strip().lower() != "no")
+            if learned:
+                to_audit({"at": datetime.now().isoformat(timespec="seconds"), **learned})
         if keep:
             kept.append(keep)
             what = "left in the queue with a problem" if keep["decision"].strip() else "no decision yet"

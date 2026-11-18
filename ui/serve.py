@@ -36,10 +36,12 @@ from ai.narration import extract
 from matcher import run as matcher_run
 from matcher.match import FORMATS, payer_name
 from matcher.match import decide as match
+from matcher.payer import current as current_links, key as payer_key
 from posting.post import handled, post_all
 from posting.verify import check, read_fineract, totals
 from review import apply as review_apply
 from review import build as queue_file
+from review import learn
 from review import report
 from review.suggest import suggest
 from statement.fetch_schedules import fetch, list_loans
@@ -246,11 +248,13 @@ def state(env: Path | None = None) -> dict:
     """What the Review tab shows: queue.csv as it is now, with local suggestions, and the ledger's totals."""
     schedules = _schedules()
     loans = {loan["loan_ref"]: loan for loan in schedules}
+    bank, links = recorded_bank(files.DATA / "bank_statement.csv"), current_links(learn.read(files.DATA))
     queue = []
     for row in queue_file.read_queue():
         problem, note = _problem_and_note(row["note"])
         queue.append({**row, "candidates": candidates(row["candidates"], loans), "problem": problem, "note": note,
-                      "suggestions": _shortlist(row, schedules, env)})
+                      "suggestions": _shortlist(row, schedules, env),
+                      "payer": learn.about(links, payer_key(row["narration"], bank))})
     summary = {key: value if key == "payments" else str(value) for key, value in totals(files.read("ledger.csv")).items()}
     return {"queue": queue, "summary": {**summary, "queue": len(queue), "loans": len(loans)}}
 
@@ -313,6 +317,8 @@ def decide(fc, d: dict, env: Path | None = None) -> dict:
         if row is None:
             return {"problem": "this line is no longer in the queue: it was decided already. Reload the page."}
         row.update({field: str(d.get(field, "")).strip() for field in queue_file.EDITS})
+        # The page learns only when its box was ticked; in the CSV an empty cell means yes.
+        row["remember"] = "yes" if d.get("remember") in (True, "yes") else "no"
         note = ORIGIN.sub("", row["note"])  # a tag from an earlier attempt is replaced, never stacked
         tag = _origin(env or ROOT / ".env", row, row["loan_ref"].upper(), d.get("origin")) if row["decision"].lower() == "post" else ""
         row["note"] = " ".join(filter(None, (tag, note)))
@@ -327,6 +333,21 @@ def decide(fc, d: dict, env: Path | None = None) -> dict:
     if left:
         return {"problem": _problem_and_note(left["note"])[0] or "no decision was given: approve or reject"}
     return {"done": next(iter(counts), "applied")}
+
+
+def toggle_link(body: dict) -> dict:
+    """Turns a learned payer account off, or on for one of its loans, and logs who did it."""
+    with WRITING:
+        audit, problem = learn.toggle(files.DATA, body)
+        if audit:
+            to_audit = files.appender("audit.csv", files.AUDIT)
+            to_audit({"at": datetime.now().isoformat(timespec="seconds"), **audit})
+            to_audit.close()
+    return {"problem": problem} if problem else {"done": audit["reason"], **links_view()}
+
+
+def links_view() -> dict:
+    return learn.view(files.DATA, files.read("audit.csv"))
 
 
 def verify(fc) -> dict:
@@ -637,6 +658,8 @@ def _generic(reason: str) -> str:
     """A reason without the payer's name, dates or numbers, so lines can be counted by kind."""
     reason = re.sub(r"'[^']*'", "'…'", reason)
     reason = re.sub(r"\d{4}-\d{2}-\d{2}", "(date)", reason)
+    reason = re.sub(r"payer account \S+ was approved for \S+", "payer account … was approved for …", reason)
+    reason = re.sub(r"(was approved for …) by .*? on \(date\)", r"\1 by … on (date)", reason)
     return re.sub(r"loan account \d+", "loan account …", reason)
 
 
@@ -820,6 +843,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, page, "text/html")
         elif self.path == "/api/state":
             self.answer(lambda: state(env))
+        elif self.path == "/api/links":
+            self.answer(links_view)
         elif self.path == "/api/settings":
             self.answer(lambda: settings_view(env))
         elif self.path == "/api/run":
@@ -845,6 +870,7 @@ class Handler(BaseHTTPRequestHandler):
         fc, env, opener = self.server.fc, self.server.env, self.server.opener
         routes = {
             "/api/decide": lambda body: decide(fc, body, env),
+            "/api/link": toggle_link,
             "/api/suggest": lambda body: ask_ai(env, body, opener),
             "/api/settings": lambda body: self.save_settings(body),
             "/api/consent": lambda body: consent(env, body),

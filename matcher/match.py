@@ -3,7 +3,10 @@
 Pure: no I/O. Rules, in order (docs/superpowers/specs/2026-11-16-matcher-design.md):
 1. a txn_id already seen in this statement -> ignore
 2. a loan account in the narration (SCPL + 9 digits) -> that loan, if the amount is due
-3. the payer's name (read with the bank's entry in FORMATS) -> the one loan whose borrower and
+3. the payer's account (matcher.payer), only if a person approved it for exactly one loan before (`links`) ->
+   that loan, if the amount is due, the payer's name does not point at another borrower and no loan the name (or
+   family name and initial) could also be for owes the same; else queued with that loan first
+4. the payer's name (read with the bank's entry in FORMATS) -> the one loan whose borrower and
    instalment fit; anything else is queued. Whether a name fits is matcher.names' call (NAME_ORDER).
 
 It never picks between loans: two that fit, or none, go to a person with the candidates and the reason.
@@ -13,7 +16,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from matcher import names
+from matcher import names, payer as payers
 
 WINDOW_DAYS = 5  # a payment counts for an instalment due up to this many days either side
 
@@ -75,12 +78,14 @@ def _decision(line: dict, outcome: str, reason: str, loans: list[dict] = ()) -> 
 
 
 def decide(lines: list[dict], schedules: list[dict], bank: str = "synthetic", extracted: dict | None = None,
-           name_order: str = "western") -> list[dict]:
+           name_order: str = "western", links: dict | None = None) -> list[dict]:
     """`extracted`: narration -> fields the AI reader read from it (payer_name, loan_account). A field is used
     only where the rules found nothing (no SCPL account, no name in the bank's FORMATS entry), and then
     exactly as the rules' own would be: it fills a blank, it never decides and never overrides a match.
     `name_order`: the NAME_ORDER setting, how a borrower's name splits into given and family (matcher.names).
+    `links`: matcher.payer.current() of data/payer_links.csv; only an active link is used. None or {}: rule 3 is off.
     """
+    by_ref = {loan["loan_ref"]: loan for loan in schedules}
     by_account = {loan["account_no"]: loan for loan in schedules}
     borrower = {id(loan): names.of_loan(loan) for loan in schedules}
     alike = {id(loan): names.alike_keys(borrower[id(loan)], name_order) for loan in schedules}
@@ -122,6 +127,28 @@ def decide(lines: list[dict], schedules: list[dict], bank: str = "synthetic", ex
         payer = payer_name(line["narration"], bank)
         if not payer and _literal(ai.get("payer_name"), line["narration"]):
             payer, via = _literal(ai["payer_name"], line["narration"]), AI
+        key = payers.key(line["narration"], bank) if links else ""
+        link = links.get(key) if key else None
+        if link and link["status"] == "active" and link["loan_ref"] in by_ref:
+            loan = by_ref[link["loan_ref"]]
+            account = f"payer account {payers.mask(key)} was approved for {loan['loan_ref']}"
+            named = [other for other in schedules if payer and names.name_fits(payer, borrower[id(other)], name_order)]
+            if not due_near(loan, paise, day):
+                out.append(_decision(line, "queue", f"{account} before, but the amount/date does not fit",
+                                     [loan] + [other for other in named if other is not loan]))
+            elif named and loan not in named:
+                out.append(_decision(line, "queue", f"{account} before, but '{payer}'{via} fits another borrower "
+                                                    f"and not this one", [loan] + named))
+            # A loan the name, or the family name and initial, could also be for, owing the same: the account may be
+            # shared (a family's), so the one approval does not settle it.
+            elif rivals := [other for other in schedules if other is not loan and due_near(other, paise, day)
+                            and (other in named or alike[id(other)] & alike[id(loan)])]:
+                out.append(_decision(line, "queue", f"{account} before, but {len(rivals)} other loan(s) fit the "
+                                                    f"name and the amount too", [loan] + rivals))
+            else:
+                out.append(_decision(line, "post", f"{account} by {link['approver']} on {link['learned_at'][:10]}; "
+                                                   f"instalment due {due_near(loan, paise, day)}", [loan]))
+            continue
         if not payer:
             out.append(_decision(line, "queue", "no payer name or loan account in the narration"))
             continue

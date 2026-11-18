@@ -104,6 +104,7 @@
   details.possible summary { cursor:pointer; color:var(--accent); font-weight:500; }
   .act { display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
   .act input.note { flex:1 1 260px; }
+  .payer { margin-top:var(--s2); } .remember { display:block; margin-top:var(--s2); }
   .box { padding:var(--s4) var(--s5); margin-top:var(--s3); }
   .box > :first-child { margin-top:0; } .box > :last-child { margin-bottom:0; }
 
@@ -352,6 +353,16 @@
     <div class="tile"><small data-w="report_title">Partner report</small><a class="btn small" id="s-report" href="/partner_report.csv">Download CSV</a>
       <small>one row per loan per month</small></div>
   </div>
+  <details class="box" id="learned">
+    <summary><b>Learned payer accounts</b> <span id="l-count" class="soft"></span></summary>
+    <p class="soft">When you approve a line, its payer account (UPI ID, IBAN or account number, never a name) can be
+      remembered for that loan. The next payment from that account then posts by itself, but only if the amount is due
+      within 5 days and the payer's name does not point at another borrower. An account approved for two different loans
+      is turned off (a shared or family account). Only the last 4 characters are ever shown.</p>
+    <div class="scroll"><table><thead><tr><th>Payer account</th><th>Loan</th><th>Status</th><th>Approved by, on</th><th></th></tr></thead>
+      <tbody id="l-rows"></tbody></table></div>
+    <p id="l-state" class="soft"></p>
+  </details>
   <div id="log"></div>
   <div id="queue"></div>
   <p class="soft">Each decision is written into <code>data\queue.csv</code>, then applied by <code>review.apply</code>:
@@ -572,16 +583,21 @@ function renderRow(row) {
   const note = el("input", {type: "text", class: "note", "aria-label": "Note for the audit log", placeholder: "note: why (goes in the audit log)", value: row.note});
   const message = el("div", {class: "problem", hidden: !row.problem}, row.problem ? "Refused: " + row.problem : "");
   const approve = el("button", {class: "approve"}, "Approve and post");
+  // Ticked by default only when the account is clear: new, or already learned. Learning is the person's choice.
+  const remember = row.payer && !row.txn_id.startsWith("NOREF-")
+    ? el("input", {type: "checkbox", checked: ["new", "active"].includes(row.payer.status)}) : null;
   const reject = el("button", {class: "reject"}, "Reject");
   const box = el("div", {class: "row"},
     el("div", {class: "top"}, el("span", {class: "amount"}, money(row.amount)), el("span", {}, row.date),
        el("span", {class: "soft mono"}, "UTR " + row.txn_id)),
     el("div", {class: "narration mono"}, row.narration),
     el("span", {class: "reason"}, "Why it is here: " + row.reason),
+    payerNote(row.payer),
     el("div", {class: "cands"}, ...cards,
        el("label", {class: "cand"}, otherRadio, row.candidates.length ? " another loan " : " no candidate found; the loan is ", other)),
     possible(),
     el("div", {class: "act"}, note, approve, reject),
+    remember ? el("label", {class: "soft remember"}, remember, ` Remember this payer account (${row.payer.masked}) for this loan`) : null,
     message);
 
   // Possible loans from our own similarity check (no AI, nothing sent). "Use this loan" only fills the box.
@@ -645,12 +661,13 @@ function renderRow(row) {
     const picked = box.querySelector(`input[name="${radio}"]:checked`);
     const loan = decision === "post" ? (picked ? picked.value || other.value.trim() : "") : "";
     if (decision === "post" && !loan) return fail("Choose a loan, or type its loan_ref, before approving.");
-    const ask = decision === "post" ? `Post ${money(row.amount)} to ${loan} as ${name}?`
+    const ask = decision === "post" ? `Post ${money(row.amount)} to ${loan} as ${name}?` + learning(row.payer, loan, remember)
                                     : `Reject this ${money(row.amount)} line as ${name}? Nothing is posted.`;
     if (!confirm(ask)) return;
     approve.disabled = reject.disabled = true;
     const origin = decision === "post" && loan === used.ref ? used.origin : "";
-    const result = await call("/api/decide", {txn_id: row.txn_id, decision, loan_ref: loan, approver: name, note: note.value, origin});
+    const result = await call("/api/decide", {txn_id: row.txn_id, decision, loan_ref: loan, approver: name, note: note.value, origin,
+                                              remember: !!(remember && remember.checked)});
     approve.disabled = reject.disabled = false;
     if (result.done) {
       $("log").prepend(el("div", {class: "done"}, `UTR ${row.txn_id}, ${money(row.amount)}: ${result.done}` +
@@ -662,6 +679,48 @@ function renderRow(row) {
   approve.addEventListener("click", () => send("post"));
   reject.addEventListener("click", () => send("reject"));
   return box;
+}
+
+function payerNote(p) {
+  if (!p || p.status === "new") return null;
+  const text = p.status === "active" ? `Payer account ${p.masked} was approved for ${p.loan_ref} before (learned).`
+    : p.status === "conflict" ? `Payer account ${p.masked} was approved for ${p.loans.join(" and ")}: it is turned off (a shared account?) and not used to match.`
+    : `Payer account ${p.masked}: its learned link to ${p.loan_ref} is turned off.`;
+  return el("div", {class: "soft payer"}, text);
+}
+
+// What approving will do to the learned payer account, said in the confirmation.
+function learning(p, loan, remember) {
+  if (!p) return "";
+  if (p.status === "active" && p.loan_ref !== loan)
+    return `\n\nPayer account ${p.masked} was approved for ${p.loan_ref} before: approving for ${loan} turns its learned link off (a shared account?).`;
+  if (p.status === "new" && remember && remember.checked)
+    return `\n\nPayer account ${p.masked} will be remembered for ${loan}: its next payment of an amount due on ${loan} posts by itself. You can turn this off under Learned payer accounts.`;
+  return "";
+}
+
+async function loadLinks() {
+  const v = await call("/api/links");
+  if (v.error) return void ($("l-state").textContent = v.error);
+  $("l-count").textContent = `${count(v.active)} payer accounts learned, ${count(v.auto_matched)} lines auto-matched this way`;
+  $("l-rows").replaceChildren(...(v.links.length ? v.links.map(linkRow)
+    : [el("tr", {}, el("td", {colSpan: 5, class: "soft"}, "Nothing learned yet. Approving a line with a payer account teaches it."))]));
+}
+
+function linkRow(l) {
+  const toggle = (status, loan) => async () => {
+    const name = approver();
+    if (!name) return void ($("l-state").textContent = "Type your name in the Approver box at the top first.");
+    const r = await call("/api/link", {id: l.id, status, loan_ref: loan, approver: name});
+    $("l-state").textContent = r.error || r.problem || r.done;
+    loadLinks();
+  };
+  const buttons = l.status === "active"
+    ? [el("button", {class: "small", onclick: toggle("disabled", l.loan_ref)}, "Turn off")]
+    : l.loans.map(loan => el("button", {class: "small", onclick: toggle("active", loan)}, `Turn on for ${loan}`));
+  const status = {active: "on", disabled: "off", conflict: "off: approved for two loans"}[l.status] || l.status;
+  return el("tr", {}, el("td", {class: "mono"}, l.masked), el("td", {}, l.loans.join(", ")), el("td", {}, status),
+            el("td", {}, `${l.approver}, ${l.learned_at.slice(0, 10)}`), el("td", {}, ...buttons));
 }
 
 function emptyQueue() {
@@ -682,6 +741,7 @@ async function load() {
   $("s-lender").textContent = money(s.lender_share);
   $("s-queue").textContent = s.queue;
   $("queue").replaceChildren(...(state.queue.length ? state.queue.map(renderRow) : [emptyQueue()]));
+  loadLinks();
 }
 
 $("verify").addEventListener("click", async () => {

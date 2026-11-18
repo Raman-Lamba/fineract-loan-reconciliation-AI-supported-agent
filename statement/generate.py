@@ -1,9 +1,12 @@
 """Turns loan schedules into a messy bank statement plus an answer key. Pure: no I/O in generate().
 
-Run:  python -m statement.generate [--hdfc]     (reads data/schedules.json, writes data/*.csv)
+Run:  python -m statement.generate [--hdfc] [--repeat-payers]     (reads data/schedules.json, writes data/*.csv)
 
 --hdfc also writes the same statement laid out like an HDFC net-banking export (data/bank_export_hdfc.csv),
 to test statement.import_bank and the matcher's HDFC narration formats against the answer key.
+--repeat-payers writes, instead, a second statement into data/repeat_payers/ (the default files are untouched):
+the same lines and answer key, but each payer pays by UPI from one account of their own (a few families share one
+for two loans, and a borrower's payments by someone else come from one relative), for review.measure_learning. By default a UPI ID is just the payer's first name + a bank.
 
 The statement is all the agent may see. The answer key says, per line, what a careful person would do:
 post (to expected_loan_ref), queue (a person decides), ignore (duplicate), or none (missed: no line).
@@ -69,8 +72,34 @@ def _ambiguous(loan: dict, amount: float, day: date, index: dict) -> bool:
     return False
 
 
-def generate(schedules: list[dict], seed: int = 20261116) -> tuple[list[dict], list[dict]]:
+FAMILIES = 4  # with --repeat-payers: this many surnames' first two loans are paid from one shared account
+
+
+def _accounts(schedules: list[dict], seed: int) -> dict:
+    """loan_ref -> the UPI ID its borrower always pays from. Its own random stream, so the statement's is unchanged."""
+    rng, used, out = random.Random(seed + 1), set(), {}
+    for loan in schedules:
+        while (vpa := f"{loan['firstname']}.{loan['lastname']}{rng.randrange(10, 100)}@{rng.choice(BANKS)}".lower()) in used:
+            pass
+        used.add(vpa)
+        out[loan["loan_ref"]] = vpa
+        relative = rng.choice(OTHER_FIRST)  # the one relative who pays for this loan when the borrower does not
+        out[("relative", loan["loan_ref"])] = (f"{relative} {loan['lastname']}".upper(),
+                                               f"{relative}.{loan['lastname']}{rng.randrange(10, 100)}@{rng.choice(BANKS)}".lower())
+    by_surname: dict = {}
+    for loan in schedules:
+        by_surname.setdefault(loan["lastname"], []).append(loan["loan_ref"])
+    for surname, refs in [(s, r) for s, r in by_surname.items() if len(r) > 1][:FAMILIES]:
+        out[refs[1]] = out[refs[0]] = f"{surname}.family@{BANKS[0]}".lower()
+    return out
+
+
+def generate(schedules: list[dict], seed: int = 20261116, repeat_payers: bool = False) -> tuple[list[dict], list[dict]]:
+    """`repeat_payers`: every UPI line of a borrower carries one UPI ID of theirs (a relative paying: always the same
+    relative, by name and UPI ID),
+    as review.measure_learning needs. The lines, amounts, dates and answer key are the same as without it."""
     rng = random.Random(seed)
+    accounts = _accounts(schedules, seed) if repeat_payers else {}
     index: dict = {}
     for loan in schedules:
         for inst in loan["instalments"]:
@@ -117,6 +146,13 @@ def generate(schedules: list[dict], seed: int = 20261116) -> tuple[list[dict], l
                 narration = f"NACH/ACH DR/SCPL{loan['account_no']}/{MON[due.month - 1].upper()} EMI/{txn[-8:]}"
             else:
                 _, narration = _narration(name, due, txn, rng)
+                if accounts and narration.startswith("UPI/"):
+                    parts = narration.split("/")
+                    parts[3] = accounts[loan["loan_ref"]]
+                    if case == "paid_by_other":
+                        relative, parts[3] = accounts[("relative", loan["loan_ref"])]
+                        parts[2] = relative[:10]
+                    narration = "/".join(parts)
             if case in ("clean", "messy_name", "early_late", "duplicate") and _ambiguous(loan, amount, day, index):
                 case = "ambiguous"
             row = {"txn_id": txn, "date": day.isoformat(), "amount": f"{amount:.2f}", "narration": narration}
@@ -207,10 +243,16 @@ def _write(path: Path, rows: list[dict]):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--hdfc", action="store_true", help="also write data/bank_export_hdfc.csv")
+    parser.add_argument("--repeat-payers", action="store_true",
+                        help="write the repeat-payer statement to data/repeat_payers/ instead (default files untouched)")
     args = parser.parse_args()
     data = Path(__file__).resolve().parents[1] / "data"
     schedules = json.loads((data / "schedules.json").read_text())
-    lines, key = generate(schedules)
+    lines, key = generate(schedules, repeat_payers=args.repeat_payers)
+    if args.repeat_payers:
+        data = data / "repeat_payers"
+        data.mkdir(exist_ok=True)
+        (data / "schedules.json").write_text(json.dumps(schedules, indent=1))
     _write(data / "bank_statement.csv", lines)
     _write(data / "answer_key.csv", key)
     counts: dict = {}

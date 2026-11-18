@@ -10,7 +10,9 @@ from datetime import date
 from pathlib import Path
 
 QUEUE = Path(__file__).resolve().parents[1] / "data" / "queue.csv"
-EDITS = ["decision", "loan_ref", "approver", "note"]  # the columns a person fills in
+# The columns a person fills in. remember: "no" stops an approval teaching the payer's account (review.learn);
+# empty or anything else lets it.
+EDITS = ["decision", "loan_ref", "approver", "note", "remember"]
 FIELDS = ["txn_id", "date", "amount", "narration", "reason", "candidates"] + EDITS
 # Excel shows a bare 12-digit number as 5.07296E+11 and saves it that way (seen on 16 Nov 2026), which
 # would lose the txn_id. With this in front, Excel keeps it as text. In memory it is always the bare id.
